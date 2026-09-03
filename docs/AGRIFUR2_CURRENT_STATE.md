@@ -1,6 +1,6 @@
 # AGRIFUR2 — Current State (checkpoint)
 
-_Last updated: pre-SIH checkpoint. Read together with `docs/CONTINUE_AGRIFUR2.md`._
+_Last updated: pre-SIH checkpoint. Read together with `docs/AGRIFUR2_CONTINUE.md`._
 
 ## What AGRIFUR2 is
 

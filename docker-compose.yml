@@ -1,0 +1,94 @@
+# ============================================================================
+# AGRIFUR2 Development Infrastructure
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # PostgreSQL + PostGIS
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: agrifur2-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: agrifur2
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/src/database/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agrifur2"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # Redis (cache / queue)
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: agrifur2-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # EMQX — MQTT 5 Broker
+  # --------------------------------------------------------------------------
+  mqtt:
+    image: emqx/emqx:5.5
+    container_name: agrifur2-mqtt
+    restart: unless-stopped
+    ports:
+      - "1883:1883"     # MQTT
+      - "8883:8883"     # MQTT over TLS
+      - "8083:8083"     # WebSocket
+      - "18083:18083"   # Dashboard
+    environment:
+      EMQX_NAME: agrifur2
+      EMQX_HOST: 0.0.0.0
+      EMQX_DASHBOARD__DEFAULT_USERNAME: admin
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: admin
+    volumes:
+      - emqxdata:/opt/emqx/data
+      - emqxlog:/opt/emqx/log
+    healthcheck:
+      test: ["CMD", "emqx", "ctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------------------------------------
+  # MinIO — S3-compatible object storage
+  # --------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: agrifur2-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - miniodata:/data
+
+volumes:
+  pgdata:
+  redisdata:
+  emqxdata:
+  emqxlog:
+  miniodata:

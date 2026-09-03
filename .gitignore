@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+build/
+*.tsbuildinfo
+
+# Env & secrets — never commit real credentials
+.env
+.env.local
+.env.*.local
+!.env.example
+backend/.env
+frontend/.env
+
+# Firmware secrets (per-device keys must never be committed)
+firmware/**/src/secrets.h
+
+# Databases (sqlite-dev fallback only)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+backend/agrifur2.db*
+
+# Codebuff session state (never commit)
+.freebuff/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Coverage / reports
+coverage/
+playwright-report/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

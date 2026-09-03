@@ -1,0 +1,170 @@
+{
+  "app": {
+    "name": "एग्रीफ्यूर2",
+    "description": "फील्ड इंटेलिजन्स ऑपरेटिंग सिस्टम"
+  },
+  "nav": {
+    "world": "जग",
+    "intelligence": "बुद्धिमत्ता",
+    "evidence": "पुरावे",
+    "investigations": "तपास",
+    "satellite": "उपग्रह",
+    "sensors": "सेन्सर",
+    "weather": "हवामान",
+    "water": "पाणी",
+    "soil": "माती",
+    "terrain": "भूपृष्ठ",
+    "crop": "पिक",
+    "environment": "पर्यावरण",
+    "digital-twin": "डिजिटल ट्विन",
+    "history": "इतिहास",
+    "simulation": "सिम्युलेशन",
+    "assistant": "AI सहाय्यक",
+    "voice": "आवाज",
+    "settings": "सेटिंग्ज",
+    "system": "सिस्टम"
+  },
+  "auth": {
+    "login": "लॉगिन",
+    "logout": "लॉगआउट",
+    "register": "नोंदणी",
+    "email": "ईमेल",
+    "password": "पासवर्ड",
+    "forgot_password": "पासवर्ड विसरलात?",
+    "no_account": "खाते नाही?",
+    "has_account": "आधीपासून खाते आहे?"
+  },
+  "farm": {
+    "title": "माझे शेत",
+    "create": "शेत तयार करा",
+    "name": "शेताचे नाव",
+    "location": "स्थान",
+    "fields": "शेते",
+    "no_farms": "अजून शेत नाही",
+    "create_first": "सुरू करण्यासाठी तुमचे पहिले शेत तयार करा"
+  },
+  "field": {
+    "title": "शेते",
+    "create": "शेत तयार करा",
+    "name": "शेताचे नाव",
+    "geometry": "शेत ज्यामिती",
+    "area": "क्षेत्रफळ",
+    "hectares": "हेक्टर",
+    "draw_polygon": "बहुभुज काढा",
+    "enter_coordinates": "निर्देशांक प्रविष्ट करा",
+    "use_current_location": "सध्याचे स्थान वापरा",
+    "no_fields": "अजून शेत नाही",
+    "create_first": "सुरू करण्यासाठी तुमचे पहिले शेत तयार करा"
+  },
+  "world": {
+    "title": "जग मॉडेल",
+    "subtitle": "संपूर्ण शेत बुद्धिमत्ता",
+    "no_field": "जग मॉडेल पाहण्यासाठी शेत निवडा",
+    "confidence": "विश्वास",
+    "uncertainty": "अनिश्चितता",
+    "last_updated": "शेवटचे अद्ययावत"
+  },
+  "evidence": {
+    "title": "पुरावे",
+    "subtitle": "डेटा स्रोत आणि उत्पत्ती",
+    "satellite": "उपग्रह",
+    "sensors": "सेन्सर",
+    "weather": "हवामान",
+    "water": "पाणी",
+    "soil": "माती",
+    "terrain": "भूपृष्ठ",
+    "crop": "पिक",
+    "farmer": "शेतकरी",
+    "history": "इतिहास",
+    "quality": "गुणवत्ता",
+    "provenance": "उत्पत्ती",
+    "no_evidence": "कोणतेही पुरावे उपलब्ध नाहीत",
+    "state": {
+      "observed": "पाहिले",
+      "derived": "प्राप्त",
+      "estimated": "अंदाजे",
+      "historical": "ऐतिहासिक",
+      "predicted": "अंदाज",
+      "simulated": "सिम्युलेटेड",
+      "unknown": "अज्ञात",
+      "modelled": "मॉडेल्ड"
+    }
+  },
+  "intelligence": {
+    "title": "बुद्धिमत्ता",
+    "subtitle": "असामान्यता, धोका आणि तपास",
+    "anomalies": "असामान्यता",
+    "risks": "धोके",
+    "uncertainty": "अनिश्चितता",
+    "contradictions": "विरोधाभास",
+    "no_intelligence": "कोणतीही बुद्धिमत्ता उपलब्ध नाही",
+    "risk_levels": {
+      "low": "कमी",
+      "medium": "मध्यम",
+      "high": "उच्च",
+      "critical": "गंभीर"
+    }
+  },
+  "investigation": {
+    "title": "तपास",
+    "subtitle": "सक्रिय तपास आणि अटी",
+    "create": "तपास तयार करा",
+    "hypotheses": "अटी",
+    "evidence": "पुरावे",
+    "missing_evidence": "गायब पुरावे",
+    "next_observations": "पुढील सर्वोत्तम निरीक्षण",
+    "conclusion": "निष्कर्ष",
+    "no_investigations": "कोणतेही सक्रिय तपास नाहीत"
+  },
+  "digital_twin": {
+    "title": "डिजिटल ट्विन",
+    "subtitle": "तुमच्या शेताचे 3D दृश्य",
+    "layers": "स्तर",
+    "explode": "विस्फोट दृश्य",
+    "timeline": "वेळेची रेषा",
+    "no_field": "डिजिटल ट्विन पाहण्यासाठी शेत निवडा"
+  },
+  "assistant": {
+    "title": "AI सहाय्यक",
+    "subtitle": "तुमच्या शेताबद्दल प्रश्न विचारा",
+    "placeholder": "तुमच्या शेताबद्दल विचारा...",
+    "thinking": "विचार करत आहे...",
+    "no_evidence": "उत्तर देण्यासाठी पुरेसे पुरावे नाहीत.",
+    "contradictions": "उपलब्ध पुरावे विरोधाभासी आहेत."
+  },
+  "system": {
+    "health": "सिस्टम आरोग्य",
+    "providers": "प्रदाते",
+    "status": {
+      "available": "उपलब्ध",
+      "unavailable": "अनुपलब्ध",
+      "error": "त्रुटी",
+      "loading": "लोड होत आहे..."
+    }
+  },
+  "common": {
+    "loading": "लोड होत आहे...",
+    "error": "त्रुटी",
+    "save": "जतन करा",
+    "cancel": "रद्द करा",
+    "delete": "हटवा",
+    "edit": "संपादित करा",
+    "create": "तयार करा",
+    "search": "शोधा",
+    "filter": "फिल्टर",
+    "refresh": "रीफ्रेश",
+    "back": "मागे",
+    "next": "पुढे",
+    "previous": "मागील",
+    "submit": "सबमिट करा",
+    "confirm": "पुष्टी करा",
+    "close": "बंद करा",
+    "view": "पहा",
+    "details": "तपशील",
+    "no_data": "कोणताही डेटा उपलब्ध नाही",
+    "offline": "ऑफलाइन",
+    "reconnecting": "पुन्हा कनेक्ट होत आहे...",
+    "live": "लाइव्ह",
+    "stale": "जुना डेटा"
+  }
+}

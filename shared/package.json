@@ -1,0 +1,11 @@
+{
+  "name": "@agrifur2/shared",
+  "version": "1.0.0",
+  "description": "AGRIFUR2 shared types and utilities",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  }
+}

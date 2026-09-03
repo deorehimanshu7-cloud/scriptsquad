@@ -1,0 +1,170 @@
+{
+  "app": {
+    "name": "AGRIFUR2",
+    "description": "Field Intelligence Operating System"
+  },
+  "nav": {
+    "world": "World",
+    "intelligence": "Intelligence",
+    "evidence": "Evidence",
+    "investigations": "Investigations",
+    "satellite": "Satellite",
+    "sensors": "Sensors",
+    "weather": "Weather",
+    "water": "Water",
+    "soil": "Soil",
+    "terrain": "Terrain",
+    "crop": "Crop",
+    "environment": "Environment",
+    "digital-twin": "Digital Twin",
+    "history": "History",
+    "simulation": "Simulation",
+    "assistant": "AI Assistant",
+    "voice": "Voice",
+    "settings": "Settings",
+    "system": "System"
+  },
+  "auth": {
+    "login": "Login",
+    "logout": "Logout",
+    "register": "Register",
+    "email": "Email",
+    "password": "Password",
+    "forgot_password": "Forgot Password?",
+    "no_account": "Don't have an account?",
+    "has_account": "Already have an account?"
+  },
+  "farm": {
+    "title": "My Farms",
+    "create": "Create Farm",
+    "name": "Farm Name",
+    "location": "Location",
+    "fields": "Fields",
+    "no_farms": "No farms yet",
+    "create_first": "Create your first farm to get started"
+  },
+  "field": {
+    "title": "Fields",
+    "create": "Create Field",
+    "name": "Field Name",
+    "geometry": "Field Geometry",
+    "area": "Area",
+    "hectares": "hectares",
+    "draw_polygon": "Draw Polygon",
+    "enter_coordinates": "Enter Coordinates",
+    "use_current_location": "Use Current Location",
+    "no_fields": "No fields yet",
+    "create_first": "Create your first field to get started"
+  },
+  "world": {
+    "title": "World Model",
+    "subtitle": "Complete field intelligence",
+    "no_field": "Select a field to view the World Model",
+    "confidence": "Confidence",
+    "uncertainty": "Uncertainty",
+    "last_updated": "Last Updated"
+  },
+  "evidence": {
+    "title": "Evidence",
+    "subtitle": "Data sources and provenance",
+    "satellite": "Satellite",
+    "sensors": "Sensors",
+    "weather": "Weather",
+    "water": "Water",
+    "soil": "Soil",
+    "terrain": "Terrain",
+    "crop": "Crop",
+    "farmer": "Farmer",
+    "history": "History",
+    "quality": "Quality",
+    "provenance": "Provenance",
+    "no_evidence": "No evidence available",
+    "state": {
+      "observed": "Observed",
+      "derived": "Derived",
+      "estimated": "Estimated",
+      "historical": "Historical",
+      "predicted": "Predicted",
+      "simulated": "Simulated",
+      "unknown": "Unknown",
+      "modelled": "Modelled"
+    }
+  },
+  "intelligence": {
+    "title": "Intelligence",
+    "subtitle": "Anomalies, risks, and investigations",
+    "anomalies": "Anomalies",
+    "risks": "Risks",
+    "uncertainty": "Uncertainty",
+    "contradictions": "Contradictions",
+    "no_intelligence": "No intelligence available",
+    "risk_levels": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "critical": "Critical"
+    }
+  },
+  "investigation": {
+    "title": "Investigations",
+    "subtitle": "Active investigations and hypotheses",
+    "create": "Create Investigation",
+    "hypotheses": "Hypotheses",
+    "evidence": "Evidence",
+    "missing_evidence": "Missing Evidence",
+    "next_observations": "Next Best Observations",
+    "conclusion": "Conclusion",
+    "no_investigations": "No active investigations"
+  },
+  "digital_twin": {
+    "title": "Digital Twin",
+    "subtitle": "3D visualization of your field",
+    "layers": "Layers",
+    "explode": "Explode View",
+    "timeline": "Timeline",
+    "no_field": "Select a field to view the Digital Twin"
+  },
+  "assistant": {
+    "title": "AI Assistant",
+    "subtitle": "Ask questions about your field",
+    "placeholder": "Ask about your field...",
+    "thinking": "Thinking...",
+    "no_evidence": "I don't have enough evidence to answer that question.",
+    "contradictions": "The available evidence is contradictory."
+  },
+  "system": {
+    "health": "System Health",
+    "providers": "Providers",
+    "status": {
+      "available": "Available",
+      "unavailable": "Unavailable",
+      "error": "Error",
+      "loading": "Loading..."
+    }
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "search": "Search",
+    "filter": "Filter",
+    "refresh": "Refresh",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "submit": "Submit",
+    "confirm": "Confirm",
+    "close": "Close",
+    "view": "View",
+    "details": "Details",
+    "no_data": "No data available",
+    "offline": "Offline",
+    "reconnecting": "Reconnecting...",
+    "live": "Live",
+    "stale": "Stale Data"
+  }
+}

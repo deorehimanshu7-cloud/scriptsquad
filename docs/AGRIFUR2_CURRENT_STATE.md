@@ -62,8 +62,25 @@ WAITING_FOR_DEVICE` with an explanation of why.
 
 ## Known blockers (exact)
 
-1. **PostGIS live run** — not executed against a live instance here.
-   Fix: `docker compose up -d postgres` → `DATABASE_MODE=postgres npm run db:migrate` → run the gated PostGIS integration suite.
+1. **PostGIS live run — blocked on host, code is ready.** Verified this machine:
+   Docker not installed, WSL not installed, native PostgreSQL 16.15 runs as a
+   Windows service on :5432 but has **no PostGIS binaries**
+   (`CREATE EXTENSION postgis` → "extension is not available").
+   Code side fully ready: `data/db.ts` writes `ST_SetSRID(ST_GeomFromGeoJSON(…),4326)`
+   / reads `ST_AsGeoJSON`, `fields.ts` sets `metrics_computed_by='postgis'`,
+   migration `001` runs `CREATE EXTENSION IF NOT EXISTS postgis;`,
+   `backend/.env.example` documents all `DB_*` vars (`DB_PASSWORD=postgres`).
+   Database `agrifur2` already exists on the native PG (empty, extension pending).
+   Unblock (either):
+   - **Docker Desktop:** `winget install -e --id Docker.DockerDesktop`, start it,
+     then `docker compose up -d postgres` (trust auth, db/user `agrifur2/postgres`,
+     port 5432 — stop the native PG service first if it still owns 5432), then:
+     `DATABASE_MODE=postgres npm run db:migrate` (backend dir)
+     `DATABASE_MODE=postgres npx jest postgis.integration.test.ts`
+     `PORT=3002 DATABASE_MODE=postgres node dist/server.js` + API verify.
+   - **PostGIS on native PG 16:** Start-menu "Application Stack Builder" →
+     select the PG 16 install → install the "PostGIS Bundle", then rerun the
+     migrate + gated suite + :3002 server commands above.
 2. **Copernicus raster/NDVI** — `COPERNICUS_CLIENT_ID/_SECRET` needed; UI truthfully shows AUTH_REQUIRED / preview probe reasons.
 3. **Bhoonidhi + CGWB water** — credentials needed; adapters truthful without them.
 4. **MQTT live path** — needs broker + physical ESP32 (firmware under `firmware/`, HARDWARE_NOT_CONNECTED).

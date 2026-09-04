@@ -1,0 +1,46 @@
+{
+  "name": "agrifur2",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AGRIFUR2 — field-centric agricultural intelligence operating system",
+  "type": "module",
+  "scripts": {
+    "dev:api": "cd apps/api && bun run dev",
+    "dev:web": "cd apps/web && bun run dev",
+    "dev": "bun run dev:api & bun run dev:web",
+    "typecheck": "cd apps/api && bunx tsc --noEmit -p tsconfig.json && cd ../web && bunx tsc --noEmit -p tsconfig.json",
+    "test": "cd apps/api && bun test",
+    "smoke": "node scripts/smoke_live.mjs",
+    "smoke:water": "node scripts/verify_water.mjs",
+    "seed": "cd apps/api && bun run seed",
+    "build": "cd apps/web && bun run build",
+    "build:api": "cd apps/api && bun run build",
+    "preview": "bun run build && cd apps/api && PORT=\"${PORT:-8787}\" bun run start",
+    "start": "cd apps/api && PORT=\"${PORT:-8787}\" bun run start"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "maplibre-gl": "^5.4.1",
+    "mqtt": "^5.15.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.1.1",
+    "three": "^0.172.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.20",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.15.30",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/three": "^0.172.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "aedes": "^1.1.2",
+    "typescript": "^5.8.3",
+    "vite": "^6.1.0"
+  }
+}

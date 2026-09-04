@@ -1,0 +1,43 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# builds
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# environment / secrets
+.env
+.env.*
+!.env.example
+
+# databases (runtime files, not schema)
+apps/api/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# logs / misc
+*.log
+npm-debug.log*
+.DS_Store
+coverage/
+.cache/
+.turbo/
+
+# editor
+.vscode/
+.idea/
+
+# archive of unrelated uploaded context (kept for provenance, not built)
+archive/
+
+# local snapshots / stray archives
+agrifur77/
+agrifur77.zip
+*.zip

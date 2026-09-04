@@ -83,6 +83,17 @@ async function request<T>(path: string, opts: { method?: string; body?: unknown;
   if (res.status === 204) return undefined as T;
   const data = (await res.json().catch(() => null)) as { error?: { code: string; message: string; details?: unknown } } | null;
   if (!res.ok) {
+    // A non-JSON error body means this origin is NOT running the AGRIFUR API
+    // (typical on static-only hosts: they answer GETs with the SPA and reject
+    // POSTs with 405). Surface that clearly instead of a raw status code.
+    if (data === null) {
+      throw new ApiError(
+        res.status,
+        "API_UNREACHABLE",
+        "Backend API is not running at this address. Deploy the full-stack server (docker compose up -d --build, see docs/DEPLOYMENT.md) or set the API origin, then reload.",
+        { status: res.status, note: "response was not the AGRIFUR API JSON envelope" },
+      );
+    }
     throw new ApiError(res.status, data?.error?.code ?? "ERROR", data?.error?.message ?? `Request failed (${res.status})`, data?.error?.details);
   }
   return data as T;

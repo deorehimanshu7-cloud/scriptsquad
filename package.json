@@ -13,7 +13,7 @@
     "smoke": "node scripts/smoke_live.mjs",
     "smoke:water": "node scripts/verify_water.mjs",
     "seed": "cd apps/api && bun run seed",
-    "build": "cd apps/web && bun run build",
+    "build": "cd apps/web && bun run build && rm -rf ../dist && cp -r dist ../dist",
     "build:api": "cd apps/api && bun run build",
     "preview": "bun run build && cd apps/api && PORT=\"${PORT:-8787}\" bun run start",
     "start": "cd apps/api && PORT=\"${PORT:-8787}\" bun run start"

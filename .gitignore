@@ -41,3 +41,6 @@ archive/
 agrifur77/
 agrifur77.zip
 *.zip
+
+# stray local build leftovers
+isolate/

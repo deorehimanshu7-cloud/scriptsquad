@@ -4,6 +4,8 @@ import { useApp } from "../../lib/state";
 import { EmptyState } from "../../components/ui";
 import { LangSwitch, useI18n } from "../../lib/i18n";
 
+const VOICE_BOT_URL = (import.meta.env.VITE_VOICE_BOT_URL as string | undefined)?.trim() ?? "";
+
 const NAV: { to?: string; labelKey?: string; icon?: string; end?: boolean; sectionKey?: string }[] = [
   { to: "/app", labelKey: "nav.world", icon: "🗺️", end: true },
   { to: "/app/twin", labelKey: "nav.twin", icon: "🧊" },
@@ -22,6 +24,7 @@ const NAV: { to?: string; labelKey?: string; icon?: string; end?: boolean; secti
   { to: "/app/simulation", labelKey: "nav.simulation", icon: "🧪" },
   { to: "/app/history", labelKey: "nav.history", icon: "🕰️" },
   { to: "/app/assistant", labelKey: "nav.assistant", icon: "💬" },
+  { to: "/app/voice", labelKey: "nav.voice", icon: "🎙️" },
   { to: "/app/system", labelKey: "nav.system", icon: "⚙️" },
   { to: "/app/fields", labelKey: "nav.fields", icon: "🏡" },
 ];
@@ -89,7 +92,7 @@ export default function AppLayout() {
         {fieldSelector}
 
         <nav className="col" style={{ gap: 2, marginTop: 4 }}>
-          {NAV.map((n) =>
+          {NAV.filter((n) => n.to !== "/app/voice" || VOICE_BOT_URL !== "").map((n) =>
             n.sectionKey ? (
               <div key={n.sectionKey} className="section-label" style={{ margin: "10px 10px 2px" }}>
                 {t(n.sectionKey)}

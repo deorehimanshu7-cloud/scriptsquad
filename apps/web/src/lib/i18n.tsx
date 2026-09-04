@@ -29,6 +29,23 @@ const DICT: Record<string, Entry> = {
   "nav.simulation": ["Simulation", "सिमुलेशन", "सिम्युलेशन"],
   "nav.history": ["History", "इतिहास", "इतिहास"],
   "nav.assistant": ["AI assistant", "AI सहायक", "AI सहाय्यक"],
+  "nav.voice": ["Voice bot", "वॉइस बॉट", "व्हॉइस बॉट"],
+  "voice.title": ["Farmer voice bot", "किसान वॉइस बॉट", "शेतकरी व्हॉइस बॉट"],
+  "voice.sub": [
+    "Talk in Marathi — answers are grounded on this field's recorded AGRIFUR evidence.",
+    "मराठी में बोलें — उत्तर इस फ़ील्ड की दर्ज AGRIFUR जानकारी पर आधारित होते हैं।",
+    "मराठीत बोला — उत्तरे या प्लॉटच्या नोंदवलेल्या AGRIFUR माहितीवर आधारित आहेत."
+  ],
+  "voice.unconfigured": [
+    "Voice bot is not configured. Set VITE_VOICE_BOT_URL and rebuild to embed your voice bot here.",
+    "वॉइस बॉट कॉन्फ़िगर नहीं है। यहाँ अपना वॉइस बॉट एम्बेड करने के लिए VITE_VOICE_BOT_URL सेट करें।",
+    "व्हॉइस बॉट कॉन्फिगर केलेले नाही. तुमचा व्हॉइस बॉट इथे एम्बेड करण्यासाठी VITE_VOICE_BOT_URL सेट करा."
+  ],
+  "voice.typeInstead": [
+    "Prefer typing?",
+    "टाइप करना चाहेंगे?",
+    "टाइप करणार का?"
+  ],
   "nav.system": ["System", "सिस्टम", "प्रणाली"],
   "nav.fields": ["Farms & fields", "खेत और फ़ील्ड", "शेत आणि प्लॉट"],
   "sec.layers": ["Evidence layers", "साक्ष्य परतें", "पुराव्याचे थर"],

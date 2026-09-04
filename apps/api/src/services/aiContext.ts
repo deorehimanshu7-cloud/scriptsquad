@@ -158,6 +158,18 @@ export interface AiContextPayload {
     uncertainties: Record<string, unknown>[];
     contradictions: Record<string, unknown>[];
   };
+  investigations: {
+    id: string;
+    title: string;
+    problem: string;
+    status: string;
+    conclusion: string | null;
+    created_at: string;
+    updated_at: string;
+    hypotheses: Record<string, unknown>[];
+    next_observations: Record<string, unknown>[];
+  }[];
+  actions: Record<string, unknown>[];
   world_model: { domains: Record<string, unknown>[] };
   memory: Record<string, unknown>[];
   focus: AiFocus;
@@ -260,6 +272,32 @@ export function buildAiContext(db: AppDb, fieldId: string, opts: AiContextOption
   const q = (sql: string, limit: number): Record<string, unknown>[] =>
     db.conn.query(sql).all(fieldId, String(limit)) as Record<string, unknown>[];
 
+  // ---- investigations (active) + hypotheses + next observations -----------
+  const invRows = db.conn
+    .query(
+      `SELECT id, title, problem, status, conclusion, created_at, updated_at
+       FROM investigations WHERE field_id = ? AND status IN ('open','collecting_evidence','hypothesis_testing','escalated')
+       ORDER BY updated_at DESC LIMIT 2`,
+    )
+    .all(fieldId) as { id: string; title: string; problem: string; status: string; conclusion: string | null; created_at: string; updated_at: string }[];
+  const investigations = invRows.map((inv) => {
+    const hypotheses = db.conn
+      .query("SELECT statement, status, tested_with FROM hypotheses WHERE investigation_id = ? ORDER BY created_at ASC LIMIT 4")
+      .all(inv.id) as Record<string, unknown>[];
+    const nextObs = db.conn
+      .query("SELECT rank, observation, status FROM next_observations WHERE investigation_id = ? AND status = 'open' ORDER BY created_at ASC LIMIT 3")
+      .all(inv.id) as Record<string, unknown>[];
+    return { ...inv, hypotheses, next_observations: nextObs };
+  });
+
+  // ---- actions (recommended / taken) ---------------------------------------
+  const actions = db.conn
+    .query(
+      `SELECT id, kind, title, description, status, recommendation_from, created_at
+       FROM actions WHERE field_id = ? AND status IN ('recommended','taken') ORDER BY created_at DESC LIMIT 6`,
+    )
+    .all(fieldId) as Record<string, unknown>[];
+
   // ---- memory ------------------------------------------------------------
   const memory = listMemory(db, fieldId, 10) as Record<string, unknown>[];
 
@@ -310,6 +348,8 @@ export function buildAiContext(db: AppDb, fieldId: string, opts: AiContextOption
         intelLimit,
       ),
     },
+    investigations,
+    actions,
     world_model: {
       domains: worldDomains.map((d) => ({
         domain: d.domain,
@@ -365,6 +405,12 @@ export function aiContextForPrompt(
     ...ctx.intelligence.risks.map((r) => `- risk ${r.risk_type}: ${r.level} — ${r.reason}`),
     ...ctx.intelligence.anomalies.map((a) => `- anomaly ${a.kind}: ${a.description}`),
     ...ctx.intelligence.contradictions.map((c) => `- contradiction: ${c.reason}`),
+    ...ctx.intelligence.uncertainties.map((u) => `- uncertainty (${u.domain ?? "field"}): ${u.kind} ${u.level} — ${u.reason}`),
+    ...ctx.investigations.map((i) => {
+      const hyps = (i.hypotheses as { statement?: string; status?: string }[]).map((h) => `${h.statement} [${h.status ?? "proposed"}]`).join("; ");
+      return `- investigation ${i.status}: ${i.title}${hyps ? ` — hypotheses: ${hyps}` : ""}`;
+    }),
+    ...ctx.actions.map((a) => `- action ${a.kind} (${a.status}): ${a.title} — ${a.description ?? ""}`.trim()),
   ].join("\n");
   return { domains: domainLines, evidence: evLines, sensorBlock, satelliteBlock, intelBlock };
 }

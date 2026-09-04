@@ -12,6 +12,7 @@ import Intel from "./pages/app/Intel";
 import Satellite from "./pages/app/Satellite";
 import Sensors from "./pages/app/Sensors";
 import Assistant from "./pages/app/Assistant";
+import VoicePage from "./pages/app/Voice";
 import Simulation from "./pages/app/Simulation";
 import Notes from "./pages/app/Notes";
 import System from "./pages/app/System";
@@ -65,6 +66,7 @@ export default function App() {
         <Route path="satellite" element={<Satellite />} />
         <Route path="sensors" element={<Sensors />} />
         <Route path="assistant" element={<Assistant />} />
+        <Route path="voice" element={<VoicePage />} />
         <Route path="simulation" element={<Simulation />} />
         <Route path="notes" element={<Notes />} />
         <Route path="system" element={<System />} />

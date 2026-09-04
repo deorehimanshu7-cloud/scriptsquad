@@ -17,6 +17,7 @@ import { assistantRoutes } from "./routes/assistant";
 import { twinRoutes } from "./routes/twin";
 import { publicHealthRoute, seedProviderStates, systemRoutes } from "./routes/system";
 import { devHardwareRoutes } from "./routes/devHardware";
+import { hardwareGatewayRoutes } from "./routes/hardwareGateway";
 import { recoverStaleJobs } from "./services/jobs";
 import { startWorker } from "./worker";
 import { startMqttSubscriber } from "./services/mqtt";
@@ -40,6 +41,9 @@ export function createApp(dbLocation = config.databasePath) {
   // DEVELOPMENT-ONLY physical-hardware path (404 unless DEV_TELEMETRY_ENABLED=1).
   // Mounted BEFORE /api routers that require a session (system etc.).
   app.use("/api/dev", devHardwareRoutes(db));
+  // Production HTTPS hardware gateway (key-protected; 503 until
+  // HARDWARE_GATEWAY_TOKEN is configured). No browser session on the device.
+  app.use("/api/hardware", hardwareGatewayRoutes(db));
   app.use("/api", farmRoutes(db));
   app.use("/api", worldRoutes(db));
   app.use("/api", intelRoutes(db));

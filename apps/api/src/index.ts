@@ -16,6 +16,7 @@ import { simRoutes } from "./routes/sims";
 import { assistantRoutes } from "./routes/assistant";
 import { twinRoutes } from "./routes/twin";
 import { publicHealthRoute, seedProviderStates, systemRoutes } from "./routes/system";
+import { devHardwareRoutes } from "./routes/devHardware";
 import { recoverStaleJobs } from "./services/jobs";
 import { startWorker } from "./worker";
 import { startMqttSubscriber } from "./services/mqtt";
@@ -36,6 +37,9 @@ export function createApp(dbLocation = config.databasePath) {
   app.get("/api/health", publicHealthRoute(db));
 
   app.use("/api/auth", authRoutes(db));
+  // DEVELOPMENT-ONLY physical-hardware path (404 unless DEV_TELEMETRY_ENABLED=1).
+  // Mounted BEFORE /api routers that require a session (system etc.).
+  app.use("/api/dev", devHardwareRoutes(db));
   app.use("/api", farmRoutes(db));
   app.use("/api", worldRoutes(db));
   app.use("/api", intelRoutes(db));

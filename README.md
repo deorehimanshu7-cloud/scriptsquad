@@ -28,7 +28,7 @@ Every value in the UI carries an explicit truth state. AGRIFUR never fabricates 
 - **Backend** — Node.js / Bun / Express, zod validation, server-side sessions (bcrypt + hashed bearer tokens)
 - **Data** — SQLite (auto-migrating schema; development default), documented path to external Postgres for production
 - **GIS / Earth observation** — field polygons, WGS84 geo-anchoring, Copernicus Data Space STAC (Sentinel-2 / Sentinel-1 metadata), Open-Meteo weather, OpenTopoData/SRTM terrain, ISRIC SoilGrids, OSM surface water
-- **IoT** — MQTT ingestion (ESP32 reference firmware in `hardware/`), HTTPS device gateway, validation + dedupe + OBSERVED evidence
+- **IoT** — MQTT ingestion (ESP32 reference firmware in `hardware/`), HTTPS device gateway, validation + dedupe + OBSERVED evidence; plus a DEVELOPMENT-only LAN HTTP path (`POST /api/dev/hardware/telemetry`, `hardware/esp32/agrifur_esp32_http/`) for the simplest real-ESP32 hookup without a broker
 - **AI** — grounded assistant over field evidence; LLM mode via an OpenAI-compatible API, local grounded fallback when no key is configured; voice input via the Web Speech API (browser-side, no audio leaves the device)
 - **3D Digital Twin** — real polygon + real DEM-derived terrain, thick exploded evidence layers, soil cutaway, click-to-inspect
 

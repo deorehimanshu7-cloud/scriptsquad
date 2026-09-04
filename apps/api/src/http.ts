@@ -37,7 +37,7 @@ export function requestContext(req: Request, _res: Response, next: NextFunction)
 export function corsMiddleware(allowedOrigin: string | null) {
   return (_req: Request, res: Response, next: NextFunction): void => {
     res.setHeader("Access-Control-Allow-Origin", allowedOrigin ?? "*");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Device-Key");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
     res.setHeader("Access-Control-Expose-Headers", "X-Request-Id");
     if (_req.method === "OPTIONS") {
@@ -57,6 +57,11 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   // Returning 500 here used to dump the whole ZodError object into the log.
   if (err instanceof ZodError) {
     res.status(400).json({ error: { code: "VALIDATION", message: "Invalid request body", details: err.flatten() } });
+    return;
+  }
+  // Malformed JSON from the body parser is a client error (400), not a 500.
+  if (err instanceof SyntaxError && (err as { status?: number }).status === 400) {
+    res.status(400).json({ error: { code: "BAD_JSON", message: "Request body is not valid JSON" } });
     return;
   }
   // 500s never echo the underlying error to the client (no SQL text, no paths,

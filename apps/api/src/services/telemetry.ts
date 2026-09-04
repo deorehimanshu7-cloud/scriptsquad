@@ -40,6 +40,10 @@ export interface SensorRange {
 export const SENSOR_RANGES: Record<string, SensorRange> = {
   soil_moisture: { unit: "%", label: "volumetric soil moisture", hardMin: 0, hardMax: 100 },
   soil_moisture_vwc: { unit: "%", label: "volumetric water content", hardMin: 0, hardMax: 100 },
+  // RAW uncalibrated ADC count from a resistive probe (0..4095 on ESP32).
+  // Stored as-is — never converted to a percentage because no calibration
+  // curve exists for the specific probe + soil.
+  soil_moisture_raw: { unit: "raw_adc", label: "raw soil moisture ADC", hardMin: 0, hardMax: 4095 },
   temperature: { unit: "°C", label: "air temperature", hardMin: -40, hardMax: 60, softMin: -10, softMax: 50 },
   air_temperature: { unit: "°C", label: "air temperature", hardMin: -40, hardMax: 60, softMin: -10, softMax: 50 },
   humidity: { unit: "%", label: "relative humidity", hardMin: 0, hardMax: 100 },
@@ -224,7 +228,7 @@ export interface IngestParams {
   fieldId: string;
   device: { id: string; name: string; external_id: string | null };
   readings: ReadingsIn;
-  transport: "https" | "mqtt";
+  transport: "https" | "mqtt" | "dev_http";
   messageId?: string;
   receivedAt?: string;
   firmwareVersion?: string | null;
@@ -288,7 +292,10 @@ export function ingestValidatedReadings(db: AppDb, p: IngestParams): { inserted:
           validation: v.verdict,
           validation_reason: v.reason,
           dedupe: key,
-          note: "Physical sensor observation delivered over " + (p.transport === "mqtt" ? "MQTT (LAN broker)" : "HTTPS gateway") + ".",
+          note:
+            "Physical sensor observation delivered over " +
+            (p.transport === "mqtt" ? "MQTT (LAN broker)" : p.transport === "dev_http" ? "DEVELOPMENT HTTP endpoint (LAN)" : "HTTPS gateway") +
+            ".",
         }),
         received,
       );

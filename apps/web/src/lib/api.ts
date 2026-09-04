@@ -28,6 +28,17 @@ import type {
 const TOKEN_KEY = "agrifur_token";
 const USER_KEY = "agrifur_user";
 
+// API origin for split-hosting (SPA on a static host, API on a persistent
+// host). Order: runtime global (window.__AGRIFUR_API__) → build-time
+// VITE_API_URL → same-origin. Empty = call /api on this origin.
+const __buildApiUrl = ((import.meta.env.VITE_API_URL as string | undefined) ?? "").trim();
+const __runtimeApiUrl =
+  (typeof window !== "undefined"
+    ? (window as Window & { __AGRIFUR_API__?: string }).__AGRIFUR_API__
+    : undefined) ?? "";
+const API_ORIGIN = (__runtimeApiUrl || __buildApiUrl).replace(/\/+$/, "");
+const apiUrl = (path: string): string => `${API_ORIGIN}/api${path}`;
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -64,7 +75,7 @@ async function request<T>(path: string, opts: { method?: string; body?: unknown;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = getToken();
   if (opts.auth !== false && token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(apiUrl(path), {
     method: opts.method ?? "GET",
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
@@ -297,7 +308,7 @@ export function streamEvents(
       const timeout = setTimeout(() => controller?.abort(), 120_000);
       try {
         const token = getToken();
-        const url = `/api/events/stream${fieldId ? `?field_id=${fieldId}` : ""}`;
+        const url = apiUrl(`/events/stream${fieldId ? `?field_id=${fieldId}` : ""}`);
         const res = await fetch(url, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           signal: controller.signal,

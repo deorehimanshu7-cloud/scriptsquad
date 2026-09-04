@@ -37,8 +37,14 @@ Health: `GET /api/health`.
 
 - **Vercel project:** Root Directory = `apps/web`, framework preset **Vite**
   (install `bun install` or `npm install`, build `vite build`, output `dist`).
-- The SPA calls `/api/*` relative to its own origin, so add a **rewrite** in the
-  Vercel project from `/api/*` to `https://<backend>/api/*` (HTTPS destination).
+- The SPA talks to the API in one of two ways:
+  1. **Same-origin rewrite:** add a Vercel project rewrite from `/api/*` to
+     `https://<backend>/api/*` (HTTPS destination) — the SPA keeps calling
+     relative `/api/*`.
+  2. **Direct origin:** build with `VITE_API_URL=https://<backend>` (or inject
+     `window.__AGRIFUR_API__` at runtime, which wins) — then the SPA calls the
+     backend cross-origin. The backend already sends CORS headers
+     (`WEB_ORIGIN` for the allow-list, or `*`) including `Authorization`.
 - Backend: run Option A's server on a persistent host, set `WEB_ORIGIN` to the
   Vercel frontend origin (CORS) and `PUBLIC_BASE_URL` accordingly.
 - What will **not** run inside Vercel, and why (do not fake it):

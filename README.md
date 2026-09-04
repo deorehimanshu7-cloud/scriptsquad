@@ -81,7 +81,7 @@ A **DEVELOPMENT-SEED** demo account (`demo@agrifur.dev`, development-only passwo
 
 ## Environment variables
 
-See [`env.example`](env.example). All variables are **server-only** — the SPA is same-origin and reads no environment variables of its own. Real keys (LLM, Copernicus OAuth, MQTT credentials) are injected through the host's environment, never committed.
+See [`env.example`](env.example). All secrets are **server-only** — real keys (LLM, Copernicus OAuth, MQTT credentials) are injected through the host's environment, never committed. The SPA is same-origin by default and reads no secrets; when split-hosting, set the non-secret build-time `VITE_API_URL` (or a runtime `window.__AGRIFUR_API__`) to the API origin.
 
 ## Deployment
 

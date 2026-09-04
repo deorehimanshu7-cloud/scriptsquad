@@ -54,6 +54,24 @@ Health: `GET /api/health`.
   - SSE realtime — long-lived stream
   - SQLite file persistence — serverless filesystems are ephemeral
 
+## Option C — Docker (full stack, one origin)
+
+The repository ships a `Dockerfile` + `docker-compose.yml` that build the web
+bundle and run the **API + SPA as one process on Bun** (this repo uses
+`bun:sqlite`, so the runtime must be Bun). Auth and every `/api` route share
+the same origin — exactly like local/preview.
+
+```bash
+cp env.example .env            # optional secrets (LLM, Copernicus, MQTT…)
+docker compose up -d --build   # http://localhost:8787, SQLite on the volume
+```
+
+- SQLite lives on the named volume `agrifur-data` (`DATABASE_PATH` =
+  `/app/apps/api/data/agrifur.db`) — survives rebuilds.
+- Set `WEB_ORIGIN` only if you later split the SPA to another origin.
+- Deploy this image to any host that runs containers (VM, Docker PaaS) and
+  put HTTPS in front of port 8787 for a production URL.
+
 ## Database
 
 - Current: SQLite at `DATABASE_PATH`, auto-migrated at boot (`schema.ts`).

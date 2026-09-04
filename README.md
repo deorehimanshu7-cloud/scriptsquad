@@ -45,6 +45,7 @@ Every value in the UI carries an explicit truth state. AGRIFUR never fabricates 
 ├── docs/          implementation status + deployment guide
 ├── env.example    every environment variable, grouped public vs server-only
 ├── package.json   single-package root: all scripts + hoisted dependencies
+├── Dockerfile + docker-compose.yml   full-stack container (Bun) + one-command stack
 ```
 
 The repository is intentionally **one deployable package at the root** (no npm workspaces) so any Node host can install and build it.

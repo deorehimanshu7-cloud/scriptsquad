@@ -34,13 +34,5 @@ coverage/
 .vscode/
 .idea/
 
-# archive of unrelated uploaded context (kept for provenance, not built)
-archive/
-
-# local snapshots / stray archives
-agrifur77/
-agrifur77.zip
+# loose archives
 *.zip
-
-# stray local build leftovers
-isolate/

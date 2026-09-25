@@ -1,0 +1,19 @@
+# The Vercel project is the static SPA (apps/web) only.
+# The API is a long-lived Bun/Express process with a monitoring worker, an MQTT
+# subscriber and a file-backed SQLite database, so it cannot run here — see
+# docs/DEPLOYMENT.md (Option B). Everything listed below is either a persistent
+# host concern or dev tooling, and none of it is needed to build apps/web.
+# Delete a line if you later add a Vercel Function that genuinely needs it.
+
+apps/api
+hardware
+voicebot
+docs
+scripts
+Dockerfile
+docker-compose.yml
+.dockerignore
+env.example
+
+# Build output is generated during the build, so it is never listed here:
+# .vercelignore only needs to cover files that are *tracked* in git.

@@ -35,24 +35,62 @@ Health: `GET /api/health`.
 
 ## Option B — frontend on Vercel, backend elsewhere
 
-- **Vercel project:** Root Directory = `apps/web`, framework preset **Vite**
-  (install `bun install` or `npm install`, build `vite build`, output `dist`).
-- The SPA talks to the API in one of two ways:
-  1. **Same-origin rewrite:** add a Vercel project rewrite from `/api/*` to
-     `https://<backend>/api/*` (HTTPS destination) — the SPA keeps calling
-     relative `/api/*`.
-  2. **Direct origin:** build with `VITE_API_URL=https://<backend>` (or inject
-     `window.__AGRIFUR_API__` at runtime, which wins) — then the SPA calls the
-     backend cross-origin. The backend already sends CORS headers
-     (`WEB_ORIGIN` for the allow-list, or `*`) including `Authorization`.
-- Backend: run Option A's server on a persistent host, set `WEB_ORIGIN` to the
-  Vercel frontend origin (CORS) and `PUBLIC_BASE_URL` accordingly.
-- What will **not** run inside Vercel, and why (do not fake it):
-  - the Express API — long-lived process, not serverless
-  - the continuous monitoring worker / scheduled provider jobs — background timers
-  - the MQTT subscriber — persistent broker connection
-  - SSE realtime — long-lived stream
-  - SQLite file persistence — serverless filesystems are ephemeral
+The repository is **already configured** for this. Import it into Vercel and
+build — no dashboard settings to change, and no Root Directory override:
+leave **Root Directory at the repository root**.
+
+What the committed [`vercel.json`](../vercel.json) does:
+
+| Setting | Value | Why |
+|---|---|---|
+| `framework` | `vite` | the SPA is plain Vite output |
+| `installCommand` | `npm install` | Vercel runs Node/npm; Bun is not required for the static build |
+| `buildCommand` | `tsc --noEmit -p apps/web/tsconfig.json && vite build apps/web` | typechecks, then builds only the SPA |
+| `outputDirectory` | `apps/web/dist` | the build output is **not** at the repository root |
+| `rewrites` | `/((?!api/).*) → /index.html` | SPA deep links (`/app/twin`) survive a refresh; `/api/*` is deliberately excluded so a missing backend returns an honest 404 instead of the HTML shell |
+
+[`.vercelignore`](../.vercelignore) additionally excludes `apps/api`, `hardware`,
+`voicebot`, `docs`, `scripts` and the Docker files from the upload, so Vercel
+only ever builds and serves the static SPA.
+
+### Wiring the API (the one remaining step)
+
+The SPA is same-origin by default: it calls relative `/api/*`. Pick one:
+
+1. **Same-origin rewrite (recommended).** Add a backend rewrite to
+   `vercel.json`, listed **above** the SPA fallback because rewrites are matched
+   in order:
+
+   ```json
+   "rewrites": [
+     { "source": "/api/:path*", "destination": "https://<backend-host>/api/:path*" },
+     { "source": "/((?!api/).*)", "destination": "/index.html" }
+   ]
+   ```
+
+   The destination must be **HTTPS**. The SPA needs no rebuild to switch.
+   Note that SSE (`/api/events/stream`) is a long-lived stream: if your backend
+   host or plan cannot proxy it, the UI falls back to polling and says so.
+2. **Direct origin.** Set `VITE_API_URL=https://<backend>` in the Vercel project
+   environment and redeploy (build-time), or inject `window.__AGRIFUR_API__` at
+   runtime (wins over the build-time value). The SPA then calls the backend
+   cross-origin; the backend already sends CORS headers (`WEB_ORIGIN` for the
+   allow-list, or `*`) including `Authorization`.
+
+On the backend (Option A's server, on a persistent host) set `WEB_ORIGIN` to the
+Vercel frontend origin and `PUBLIC_BASE_URL` accordingly.
+
+### What will **not** run inside Vercel, and why (do not fake it)
+
+- the Express API — long-lived process, not serverless
+- the continuous monitoring worker / scheduled provider jobs — background timers
+- the MQTT subscriber — persistent broker connection
+- SSE realtime — long-lived stream
+- SQLite file persistence — serverless filesystems are ephemeral
+
+Those all live on the Option A/C host. Vercel serves the SPA only, and the UI
+labels each capability with its truthful state (`NOT_CONFIGURED`, `NO_DATA`, …)
+rather than pretending the backend is present.
 
 ## Option C — Docker (full stack, one origin)
 

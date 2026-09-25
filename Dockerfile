@@ -6,7 +6,7 @@
 # Run:    docker run --rm -p 8787:8787 -v agrifur-data:/app/apps/api/data agrifur
 # Compose: docker compose up -d --build   (see docker-compose.yml)
 
-# ---- build stage: install deps + produce apps/web/dist and root dist ----
+# ---- build stage: install deps + produce apps/web/dist ----
 FROM oven/bun:1 AS build
 WORKDIR /app
 COPY package.json bun.lock ./

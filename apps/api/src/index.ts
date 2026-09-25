@@ -1,6 +1,5 @@
 import express from "express";
 import { existsSync } from "node:fs";
-import path from "node:path";
 import { openDb } from "./db";
 import { config } from "./config";
 import { corsMiddleware, errorHandler, notFound, requestContext, audit } from "./http";
@@ -64,7 +63,11 @@ export function createApp(dbLocation = config.databasePath) {
   if (existsSync(webDist)) {
     app.use(express.static(webDist, { index: false, maxAge: "1h" }));
     app.get(/^(?!\/api\/).*/ , (_req, res) => {
-      res.sendFile(path.join(webDist, "index.html"));
+      // Resolve index.html *relative to root*. Passing an absolute path makes
+      // `send` run its dotfile policy over every segment of the real path, so a
+      // deployment directory containing a dot-segment (e.g. \srv\site\.build)
+      // made every SPA route 404 while the hashed assets still loaded.
+      res.sendFile("index.html", { root: webDist });
     });
     console.log(`[api] serving web build from ${webDist}`);
   } else {

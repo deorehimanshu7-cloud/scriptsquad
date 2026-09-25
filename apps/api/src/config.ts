@@ -8,9 +8,20 @@ function envInt(name: string, fallback: number): number {
   const v = parseInt(env(name, String(fallback)), 10);
   return Number.isFinite(v) ? v : fallback;
 }
+/**
+ * PORT needs stricter validation than the other integers. Some launchers and CI
+ * images export PORT=0, and 0 passes Number.isFinite — so the OS silently hands
+ * out a random port and the process starts "fine" while every documented URL
+ * (and the container healthcheck) is unreachable. Treat 0 and out-of-range
+ * values as "not configured" and fall back to the real default.
+ */
+function envPort(name: string, fallback: number): number {
+  const v = parseInt(env(name, String(fallback)), 10);
+  return Number.isFinite(v) && v > 0 && v <= 65535 ? v : fallback;
+}
 
 export const config = {
-  port: envInt("PORT", 8787),
+  port: envPort("PORT", 8787),
   publicBaseUrl: env("PUBLIC_BASE_URL", "http://localhost:8787"),
   databasePath: env("DATABASE_PATH") || path.resolve(import.meta.dir, "..", "data", "agrifur.db"),
   sessionTtlHours: envInt("SESSION_TTL_HOURS", 720),

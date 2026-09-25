@@ -135,9 +135,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!getToken() || !user) return;
     if (offRef.current) offRef.current();
-    const off = streamEvents(
-      (ev) => {
-        setLive(true);
+    const off = streamEvents({
+      onEvent: (ev) => {
         setEvents((prev) => [ev, ...prev].slice(0, 200));
         if (
           ev.type === "PROVIDER_STATUS_CHANGED" ||
@@ -150,8 +149,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           refresh();
         }
       },
-      () => setLive(false),
-    );
+      // "live" reflects the stream connection state, not whether events happen
+      // to be flowing right now.
+      onStatus: (connected) => setLive(connected),
+    });
     offRef.current = off;
     return () => {
       off();

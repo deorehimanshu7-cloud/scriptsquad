@@ -304,14 +304,27 @@ export const systemApi = {
 /**
  * Live event stream using fetch streaming (EventSource cannot send the auth
  * header). Events are filtered server-side to the user's fields.
+ *
+ * `onStatus` reports the *connection* state rather than traffic: a healthy
+ * stream that happens to be idle sends no events, so inferring "live" from the
+ * first event left the shell claiming "reconnecting…" indefinitely.
  */
 export function streamEvents(
-  onEvent: (ev: SystemEvent) => void,
-  onClose: () => void,
+  handlers: {
+    onEvent: (ev: SystemEvent) => void;
+    onStatus?: (connected: boolean) => void;
+    onClose?: () => void;
+  },
   fieldId?: string,
 ): () => void {
   let cancelled = false;
   let controller: AbortController | null = null;
+  let connected = false;
+  const setConnected = (next: boolean) => {
+    if (connected === next) return;
+    connected = next;
+    handlers.onStatus?.(next);
+  };
 
   const run = async () => {
     while (!cancelled) {
@@ -326,9 +339,11 @@ export function streamEvents(
         });
         clearTimeout(timeout);
         if (!res.ok || !res.body) {
+          setConnected(false);
           await new Promise((r) => setTimeout(r, 5000));
           continue;
         }
+        setConnected(true);
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -344,7 +359,7 @@ export function streamEvents(
               .find((l) => l.startsWith("data:"));
             if (!line) continue;
             try {
-              onEvent(JSON.parse(line.slice(5).trim()) as SystemEvent);
+              handlers.onEvent(JSON.parse(line.slice(5).trim()) as SystemEvent);
             } catch {
               /* ignore malformed frames */
             }
@@ -354,10 +369,11 @@ export function streamEvents(
         /* stream interrupted — reconnect */
       } finally {
         clearTimeout(timeout);
+        setConnected(false);
       }
       if (!cancelled) await new Promise((r) => setTimeout(r, 4000));
     }
-    onClose();
+    handlers.onClose?.();
   };
 
   void run();

@@ -11,24 +11,15 @@ import { fmtArea, fmtDate, fmtNum, timeAgo } from "../../lib/format";
 import type { Domain, ProviderState, SatelliteProduct, TruthState } from "../../lib/types";
 import { DOMAIN_LABELS } from "../../lib/types";
 
-type Basemap = "dark" | "light" | "sat";
-
-const BASEMAPS: Record<Basemap, maplibregl.StyleSpecification | string> = {
-  dark: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-  light: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-  sat: {
-    version: 8,
-    sources: {
-      esri: {
-        type: "raster",
-        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-        tileSize: 256,
-        attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
-      },
-    },
-    layers: [{ id: "esri", type: "raster", source: "esri" }],
-  },
-};
+import {
+  buildBasemapStyle,
+  detailStatus,
+  CARTO_DARK,
+  CLARITY_OPTIONS,
+  IMAGERY_OPTIONS,
+  type ClarityId,
+  type ImageryId,
+} from "../../lib/basemap";
 
 interface WmEnvelope {
   id: string;
@@ -63,7 +54,16 @@ function WorldInner() {
   const [wm, setWm] = useState<WmEnvelope | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
-  const [basemap, setBasemap] = useState<Basemap>("dark");
+  // Imagery defaults to "auto": regional true-colour when zoomed out, high-res
+  // aerial when zoomed in, so neither end of the zoom range is upscaled mush.
+  const [imagery, setImagery] = useState<ImageryId>("dark");
+  const [clarity, setClarity] = useState<ClarityId>("enhanced");
+  const [showLabels, setShowLabels] = useState(false);
+  const [showHillshade, setShowHillshade] = useState(false);
+  const [viewZoom, setViewZoom] = useState(13);
+  // Honest resolution readout: how much ground one screen pixel covers right
+  // now, versus what the imagery can actually resolve.
+  const detail = detailStatus(imagery, field.centroid_lat, viewZoom);
   const [products, setProducts] = useState<SatelliteProduct[]>([]);
   const [prodLoading, setProdLoading] = useState(false);
   const bootstrappedFor = useRef<Set<string>>(new Set());
@@ -97,36 +97,56 @@ function WorldInner() {
     if (!mapEl.current || map.current) return;
     const m = new maplibregl.Map({
       container: mapEl.current,
-      style: BASEMAPS.dark as string,
+      style: CARTO_DARK,
       center: [field.centroid_lon, field.centroid_lat],
       zoom: 13,
       pitch: 45,
+      // Capped below MapLibre's default 22 on purpose. The imagery services stop
+      // having real detail around z19; letting the map go to z22 only invited
+      // users to zoom into upscaled pixels.
+      maxZoom: 20,
+      minZoom: 2,
       attributionControl: { compact: true },
     });
     m.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-left");
+
+    const addWorldLayers = () => {
+      if (!m.getSource("field")) m.addSource("field", { type: "geojson", data: geoJsonOf(field) as never });
+      if (!m.getLayer("field-fill"))
+        m.addLayer({ id: "field-fill", type: "fill", source: "field", paint: { "fill-color": "#3fd97c", "fill-opacity": 0.16 } });
+      if (!m.getLayer("field-line"))
+        m.addLayer({ id: "field-line", type: "line", source: "field", paint: { "line-color": "#3fd97c", "line-width": 2.2 } });
+      if (!m.getLayer("centroid"))
+        m.addLayer({
+          id: "centroid",
+          type: "circle",
+          source: {
+            type: "geojson",
+            data: { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [field.centroid_lon, field.centroid_lat] } },
+          },
+          paint: { "circle-radius": 5, "circle-color": "#f5b942", "circle-stroke-color": "#0a120d", "circle-stroke-width": 2 },
+        });
+      if (!m.getSource("sat-products"))
+        m.addSource("sat-products", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      if (!m.getLayer("sat-footprints"))
+        m.addLayer({
+          id: "sat-footprints",
+          type: "line",
+          source: "sat-products",
+          paint: { "line-color": "#5da9f6", "line-width": 1.2, "line-opacity": 0.65 },
+        });
+    };
+
     m.on("load", () => {
-      m.addSource("field", { type: "geojson", data: geoJsonOf(field) as never });
-      m.addLayer({ id: "field-fill", type: "fill", source: "field", paint: { "fill-color": "#3fd97c", "fill-opacity": 0.16 } });
-      m.addLayer({ id: "field-line", type: "line", source: "field", paint: { "line-color": "#3fd97c", "line-width": 2.2 } });
-      m.addLayer({
-        id: "centroid",
-        type: "circle",
-        source: {
-          type: "geojson",
-          data: { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [field.centroid_lon, field.centroid_lat] } },
-        },
-        paint: { "circle-radius": 5, "circle-color": "#f5b942", "circle-stroke-color": "#0a120d", "circle-stroke-width": 2 },
-      });
-      m.addSource("sat-products", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      m.addLayer({
-        id: "sat-footprints",
-        type: "line",
-        source: "sat-products",
-        paint: { "line-color": "#5da9f6", "line-width": 1.2, "line-opacity": 0.65 },
-      });
+      addWorldLayers();
       const bbox = field.bbox;
       m.fitBounds([[bbox.min_lon, bbox.min_lat], [bbox.max_lon, bbox.max_lat]], { padding: 70, pitch: 45, maxZoom: 15 });
     });
+    // setStyle() replaces the WHOLE style, dropping every custom source and
+    // layer. Without this the field outline and acquisition footprints vanished
+    // the moment you switched basemap.
+    m.on("style.load", () => addWorldLayers());
+    m.on("zoom", () => setViewZoom(m.getZoom()));
     map.current = m;
     return () => {
       m.remove();
@@ -135,12 +155,12 @@ function WorldInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // basemap switch
+  // basemap / imagery switch
   useEffect(() => {
     const m = map.current;
     if (!m) return;
-    void m.setStyle(BASEMAPS[basemap] as string);
-  }, [basemap]);
+    void m.setStyle(buildBasemapStyle({ imagery, clarity, labels: showLabels, hillshade: showHillshade }) as never);
+  }, [imagery, clarity, showLabels, showHillshade]);
 
   // keep field + satellite layers in sync, and refit the camera on field switch
   const lastFieldId = useRef<string>(field.id);
@@ -249,13 +269,37 @@ function WorldInner() {
         <div>
           <div className="map-wrap" style={{ height: "calc(100vh - 190px)", minHeight: 480 }}>
             <div ref={mapEl} style={{ position: "absolute", inset: 0 }} />
-            <div className="map-tools">
-              <div className="row" style={{ gap: 4 }}>
-                {(["dark", "light", "sat"] as Basemap[]).map((b) => (
-                  <button key={b} className={`btn btn-sm ${basemap === b ? "btn-primary" : ""}`} onClick={() => setBasemap(b)} type="button">
-                    {b === "dark" ? t("world.dark") : b === "light" ? t("world.light") : t("world.sat")}
-                  </button>
-                ))}
+            <div className="map-tools" style={{ maxWidth: 340 }}>
+              <div className="col" style={{ gap: 6 }}>
+                <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+                  {IMAGERY_OPTIONS.map((o) => (
+                    <button
+                      key={o.id}
+                      className={`btn btn-sm ${imagery === o.id ? "btn-primary" : ""}`}
+                      onClick={() => setImagery(o.id)}
+                      type="button"
+                      title={t(o.noteKey)}
+                    >
+                      {t(o.labelKey)}
+                    </button>
+                  ))}
+                </div>
+                {imagery !== "dark" && imagery !== "light" && (
+                  <div className="row" style={{ gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                    <span className="faint" style={{ fontSize: 11 }}>{t("map.clarity")}</span>
+                    {CLARITY_OPTIONS.map((c) => (
+                      <button key={c.id} className={`btn btn-sm ${clarity === c.id ? "btn-primary" : "btn-ghost"}`} onClick={() => setClarity(c.id)} type="button">
+                        {t(c.labelKey)}
+                      </button>
+                    ))}
+                    <button className={`btn btn-sm ${showLabels ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowLabels((v) => !v)} type="button">
+                      {t("map.labels")}
+                    </button>
+                    <button className={`btn btn-sm ${showHillshade ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowHillshade((v) => !v)} type="button">
+                      {t("map.hillshade")}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
             <div className="map-legend">
@@ -264,7 +308,15 @@ function WorldInner() {
                 <span className="row" style={{ gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 50, background: "#f5b942", display: "inline-block" }} /> {t("world.legendCentroid")}</span>
                 <span className="row" style={{ gap: 4 }}><span style={{ width: 14, height: 3, background: "#5da9f6", display: "inline-block" }} /> {t("world.legendAcq", { n: products.length })}</span>
               </div>
-              {basemap === "sat" && <div className="faint" style={{ fontSize: 10.5, marginTop: 4 }}>{t("world.satNote")}</div>}
+              {imagery !== "dark" && imagery !== "light" && (
+                <div className="faint" style={{ fontSize: 10.5, marginTop: 4 }}>
+                  {t("world.satNote")}{" "}
+                  <span className={detail?.beyondNative ? "warn-text" : ""}>
+                    {t("map.detail", { mpp: (detail?.metresPerPixel ?? 0).toFixed(2) })}
+                    {detail?.beyondNative ? ` — ${t("map.beyondNative")}` : ""}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 

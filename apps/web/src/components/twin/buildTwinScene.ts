@@ -48,6 +48,10 @@ export interface TwinLayerData {
   crop_name?: string | null;
   count?: number;
   devices?: { name: string; status: string; position?: { lat: number; lon: number } }[];
+  /** water: mapped OSM features within 6 km of the field (count) */
+  features_6km?: number | null;
+  /** water: distance to the nearest mapped feature, km (direction is NOT recorded) */
+  nearest_km?: number | null;
   /** Real DEM raster samples inside the field (lat/lon/elevation) — used to displace the ground surface. */
   samples?: { lat: number; lon: number; elevation_m: number }[];
   sample_count?: number | null;
@@ -65,7 +69,11 @@ export interface TwinSceneInput {
   };
   layers: {
     terrain: TwinLayerData;
-    soil: TwinLayerData & { properties?: { property: string; value: number | null; unit: string | null }[] };
+    soil: TwinLayerData & {
+      properties?: { property: string; depth?: string | null; value: number | null; unit: string | null }[];
+      /** real SoilGrids depth intervals present, e.g. ["0-5cm","5-15cm"] */
+      depths?: string[];
+    };
     crop: TwinLayerData;
     water: TwinLayerData;
     sensors: TwinLayerData & { devices: { name: string; status: string }[] };
@@ -79,7 +87,7 @@ export interface TwinSceneInput {
   };
 }
 
-export type TwinLayers = "field" | "soil" | "roots" | "crops" | "sensors" | "satellite" | "intel";
+export type TwinLayers = "field" | "soil" | "roots" | "crops" | "water" | "sensors" | "satellite" | "intel";
 
 export interface TwinSceneHandle {
   setLayerVisible: (layer: TwinLayers, visible: boolean) => void;
@@ -110,23 +118,31 @@ interface LayerGroup {
   belowObjects: THREE.Object3D[]; // parts that live below the surface slice
 }
 
-// ---- display thicknesses (metres). The exploded stack exaggerates the
-// vertical scale on purpose: each layer must read as a THICK, ordered slab
-// (XY stays to real scale; the scene labels say DISPLAY SCALE).
-const SOIL_DEPTH_M = 12; // deep translucent soil column (sub-surface slice)
-const ROOT_BAND_M = 4; // root-zone band = top ROOT_BAND_M of the soil column
-const PLATE_M = 1.6; // exploded chip thickness for thin surface layers
-// exploded lift (group.position.y at fraction=1) per layer — cumulative so the
-// slabs stack one above the other with even gaps, in a fixed order:
-// field → soil → roots → crops → sensors → satellite → intel
-const FIELD_LIFT = 0.4;
-const SOIL_LIFT = SOIL_DEPTH_M + 8; // 20 → slab 8..20
-const ROOT_LIFT = SOIL_LIFT + ROOT_BAND_M + 4; // 28 → band 24..28
-const CROP_LIFT = ROOT_LIFT + ROOT_BAND_M + 3; // 35 → chip 35..36.6, plants to ~42.6
-const SENSOR_LIFT = CROP_LIFT + 11; // 46 → chip 46..47.6
-const SAT_LIFT = SENSOR_LIFT + 5; // 51 → chip 51..52.6
-const INTEL_LIFT = SAT_LIFT + 5; // 56 → chip 56..57.6, markers to ~63
-const STACK_PAN_M = 46; // how far the camera target rises at 100% explode
+// ---- vertical display scale -------------------------------------------------
+// The exploded stack is a DISPLAY exaggeration: XY stays true to the real field
+// geometry, Y does not. These values used to be fixed metres — 8 m steps, 1.2 m
+// chips — which is unreadable on a 30-hectare field roughly 570 m across: every
+// slab was thinner than the field was wide, so the layers visually collapsed
+// onto one another and their captions overlapped. They are now derived from the
+// field footprint inside buildTwinScene() (see "vertical display scale" below),
+// so a kitchen plot and a large holding both get a legible cutaway, and the
+// scene states the honest exaggeration factor it actually used.
+const clampM = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+
+/**
+ * Tint a soil depth band from its REAL SoilGrids values: more clay reads as a
+ * denser brown, more organic carbon reads darker. This is a legend for the
+ * numbers printed beside the band — it is never a stand-in for a measurement,
+ * and a band with no returned values falls back to a neutral tone.
+ */
+function soilBandColor(clay: number | null, soc: number | null): number {
+  const base = new THREE.Color(0xb99a68); // sandy
+  const clayey = new THREE.Color(0x7d5a3c);
+  const carbon = new THREE.Color(0x3b2a1c);
+  const fClay = clay === null ? 0.35 : Math.min(1, Math.max(0, clay / 600));
+  const fSoc = soc === null ? 0.15 : Math.min(1, Math.max(0, soc / 40));
+  return base.lerp(clayey, fClay).lerp(carbon, fSoc * 0.55).getHex();
+}
 
 function localBounds(rings: TwinRing[]): { minX: number; maxX: number; minZ: number; maxZ: number } {
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
@@ -214,14 +230,24 @@ function buildDisplacedGround(
   return geo;
 }
 
-function randomPointsInRings(rings: TwinRing[], count: number, seed: number): { x: number; z: number }[] {
+/**
+ * Crop stand layout: parallel ROWS clipped to the real field polygon, with
+ * plants spaced along each row.
+ *
+ * Drilled crops grow in rows, and a row layout is what makes a field read as a
+ * worked field rather than as scattered noise — the previous version dropped
+ * plants at random points. Rows run east–west (along local +x) and are spaced
+ * north–south, so the stand follows the field's long axis. Both spacings are
+ * DISPLAY values; the layer is labelled MODELLED and is never presented as a
+ * measured crop. Points outside the polygon are dropped, so the stand takes the
+ * real field shape.
+ */
+function cropRowPoints(
+  rings: TwinRing[],
+  rowSpacingM: number,
+  plantSpacingM: number,
+): { x: number; z: number }[] {
   const bb = localBounds(rings);
-  const pts: { x: number; z: number }[] = [];
-  let s = seed;
-  const rnd = () => {
-    s = (s * 1103515245 + 12345) % 2147483648;
-    return s / 2147483648;
-  };
   const outer = rings[0].ring;
   const inside = (x: number, z: number) => {
     let hit = false;
@@ -231,12 +257,16 @@ function randomPointsInRings(rings: TwinRing[], count: number, seed: number): { 
     }
     return hit;
   };
-  let guard = 0;
-  while (pts.length < count && guard < count * 60) {
-    const x = bb.minX + rnd() * (bb.maxX - bb.minX);
-    const z = bb.minZ + rnd() * (bb.maxZ - bb.minZ);
-    guard++;
-    if (inside(x, z)) pts.push({ x, z });
+  const pts: { x: number; z: number }[] = [];
+  const depthM = Math.max(bb.maxZ - bb.minZ, 1);
+  const rows = Math.max(2, Math.round(depthM / Math.max(rowSpacingM, 0.5)));
+  const stepZ = depthM / rows;
+  const stepX = Math.max(plantSpacingM, 0.5);
+  for (let r = 0; r < rows; r++) {
+    const z = bb.minZ + (r + 0.5) * stepZ;
+    for (let x = bb.minX + stepX / 2; x <= bb.maxX; x += stepX) {
+      if (inside(x, z)) pts.push({ x, z });
+    }
   }
   return pts;
 }
@@ -295,6 +325,34 @@ export function buildTwinScene(
   const bb = twin.field.polygon_local_m.length > 0 ? localBounds(twin.field.polygon_local_m) : { minX: -200, maxX: 200, minZ: -200, maxZ: 200 };
   const span = Math.max(bb.maxX - bb.minX, bb.maxZ - bb.minZ, 60);
   const extent = Math.max(span * 1.7, 560);
+
+  // ---- vertical display scale, derived from the REAL footprint ---------------
+  // Every vertical quantity scales with the field's own size, so the stack
+  // stays legible whether the parcel is 0.2 ha or 200 ha. Floors keep a tiny
+  // plot from collapsing; ceilings stop a huge holding from becoming a tower.
+  const SOIL_DEPTH_M = clampM(span * 0.06, 12, 70); // sub-surface slice thickness
+  const ROOT_BAND_M = clampM(span * 0.02, 3, 24); // root-zone band
+  const PLATE_M = clampM(span * 0.022, 1.2, 26); // exploded slab thickness
+  const STACK_STEP_M = clampM(span * 0.1, 8, 110); // gap between stacked layers
+  const GAP_M = STACK_STEP_M * 0.75;
+  const FIELD_LIFT = span * 0.004 + 0.4; // the surface layer stays on the surface
+  const SOIL_LIFT = SOIL_DEPTH_M + GAP_M; // clear of the sub-surface column
+  const ROOT_LIFT = SOIL_LIFT + ROOT_BAND_M + GAP_M;
+  const CROP_LIFT = ROOT_LIFT + STACK_STEP_M;
+  const WATER_LIFT = CROP_LIFT + STACK_STEP_M;
+  const SENSOR_LIFT = WATER_LIFT + STACK_STEP_M;
+  const SAT_LIFT = SENSOR_LIFT + STACK_STEP_M;
+  const INTEL_LIFT = SAT_LIFT + STACK_STEP_M;
+  const STACK_PAN_M = INTEL_LIFT - STACK_STEP_M * 0.8; // camera target rise at 100% explode
+  // Marker size scales with the footprint too — a fixed 2 m sphere is a
+  // sub-pixel speck on a 570 m field.
+  const markerM = clampM(span * 0.012, 1.2, 14);
+  // Caption height above a slab's top face. Proportional to the slab so a
+  // caption can never end up buried inside its own layer.
+  const captionY = (k: number) => PLATE_M * (1.15 + 1.5 * k);
+  // Real soil intervals covered by the column are 0–60 cm; the honest statement
+  // of how far the drawn depth axis departs from reality.
+  const verticalExaggeration = Math.max(1, Math.round(SOIL_DEPTH_M / 0.6));
 
   // default oblique view that shows surface + the top of the sub-surface slice
   camera.position.set(span * 0.6, extent * 0.52, extent * 1.05);
@@ -423,7 +481,7 @@ export function buildTwinScene(
     fg.surfaceObjects.push(fill);
     pickables.push({ obj: fill, pick: fill.userData.pick as TwinPick });
 
-    const center = new THREE.Mesh(new THREE.SphereGeometry(1.5, 12, 12), new THREE.MeshBasicMaterial({ color: 0xf5b942 }));
+    const center = new THREE.Mesh(new THREE.SphereGeometry(markerM * 0.7, 12, 12), new THREE.MeshBasicMaterial({ color: 0xf5b942 }));
     center.position.set(0, 0.5, 0);
     center.userData.pick = {
       kind: "field",
@@ -435,7 +493,7 @@ export function buildTwinScene(
     pickables.push({ obj: center, pick: center.userData.pick as TwinPick });
 
     const label = cssLabel("1 · FIELD — real geometry", "#3fd97c", { size: 13 });
-    label.position.set(0, 4.2, 0);
+    label.position.set(0, captionY(0.8), 0);
     fg.group.add(label);
     fg.surfaceObjects.push(label);
   }
@@ -448,36 +506,105 @@ export function buildTwinScene(
     const soil = twin.layers.soil;
     const hasData = !!soil.properties && soil.properties.length > 0;
     const shape = ringShape(twin.field.polygon_local_m);
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: SOIL_DEPTH_M, bevelEnabled: false });
-    geo.rotateX(-Math.PI / 2); // extrude into +y so translate down shifts below 0
-    geo.translate(0, -SOIL_DEPTH_M, 0); // slab from y=0 down to y=-SOIL_DEPTH_M
+    // REAL depth profile: SoilGrids returns each property per depth interval
+    // (0-5 / 5-15 / 15-30 / 30-60 cm). Every interval becomes its own band, with
+    // display thickness proportional to its real thickness and a tint derived
+    // from that depth's actual clay and organic-carbon values. An interval gets
+    // a band only if the provider actually returned values for it.
+    const intervals = (soil.depths ?? [])
+      .map((d) => {
+        const m = /^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)cm$/.exec(d);
+        return m ? { depth: d, top: Number(m[1]), bottom: Number(m[2]) } : null;
+      })
+      .filter((b): b is { depth: string; top: number; bottom: number } => !!b && b.bottom > b.top)
+      .sort((a, b) => a.top - b.top);
+    const totalCm = intervals.reduce((a, b) => a + (b.bottom - b.top), 0);
+    const propsAt = (depth: string) => (soil.properties ?? []).filter((p) => p.depth === depth);
+    const valAt = (depth: string, prop: string): number | null => {
+      const hit = propsAt(depth).find((p) => p.property === prop);
+      return hit && typeof hit.value === "number" ? hit.value : null;
+    };
+    const geos: THREE.BufferGeometry[] = [];
+    if (intervals.length > 0 && totalCm > 0) {
+      let cursor = 0; // display metres already drawn, top-down
+      for (const band of intervals) {
+        const thick = Math.max(((band.bottom - band.top) / totalCm) * SOIL_DEPTH_M, 0.45);
+        const clay = valAt(band.depth, "clay");
+        const soc = valAt(band.depth, "soc");
+        const geo = new THREE.ExtrudeGeometry(shape, { depth: thick, bevelEnabled: false });
+        geo.rotateX(-Math.PI / 2);
+        geo.translate(0, -cursor - thick, 0); // occupies [-(cursor+thick), -cursor]
+        geos.push(geo);
+        const bmesh = new THREE.Mesh(
+          geo,
+          new THREE.MeshPhongMaterial({
+            color: soilBandColor(clay, soc),
+            transparent: true,
+            opacity: 0.72,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        );
+        const detail = propsAt(band.depth)
+          .filter((p) => typeof p.value === "number")
+          .map((p) => `${p.property} ${p.value}${p.unit ? ` ${p.unit}` : ""}`)
+          .join(" · ");
+        bmesh.userData.pick = {
+          kind: "layer",
+          label: `Soil ${band.depth} — ESTIMATED (SoilGrids)`,
+          note: detail
+            ? `${detail}\nReal SoilGrids v2.0 depth interval ${band.top}–${band.bottom} cm. ESTIMATED global model data (~250 m cells) — not a field measurement.`
+            : `No SoilGrids values were returned for ${band.depth}.`,
+        } satisfies TwinPick;
+        lg.group.add(bmesh);
+        lg.belowObjects.push(bmesh);
+        pickables.push({ obj: bmesh, pick: bmesh.userData.pick as TwinPick });
 
-    const color = hasData ? 0xb08d57 : 0x42554b;
-    const mat = new THREE.MeshPhongMaterial({
-      color,
-      transparent: true,
-      opacity: hasData ? 0.62 : 0.34,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.userData.pick = {
-      kind: "layer",
-      label: hasData ? "Soil volume — ESTIMATED (global model)" : `Soil volume — ${soil.state ?? "NO_DATA"}`,
-      note: soil.note,
-    } satisfies TwinPick;
-    lg.group.add(mesh);
-    lg.belowObjects.push(mesh);
-    pickables.push({ obj: mesh, pick: mesh.userData.pick as TwinPick });
+        const blabel = cssLabel(
+          `${band.top}–${band.bottom} cm${soc !== null ? ` · SOC ${soc}` : ""}${clay !== null ? ` · clay ${clay}` : ""}`,
+          "#e2c79a",
+          { size: 11, bg: "rgba(20,14,8,0.85)" },
+        );
+        blabel.position.set(bb.minX, -cursor - thick / 2, bb.maxZ);
+        lg.group.add(blabel);
+        lg.belowObjects.push(blabel);
+        cursor += thick;
+      }
+    } else {
+      // No depth profile (or a legacy topsoil-only record): one honest slab.
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: SOIL_DEPTH_M, bevelEnabled: false });
+      geo.rotateX(-Math.PI / 2);
+      geo.translate(0, -SOIL_DEPTH_M, 0);
+      geos.push(geo);
+      const mesh = new THREE.Mesh(
+        geo,
+        new THREE.MeshPhongMaterial({
+          color: hasData ? 0xb08d57 : 0x42554b,
+          transparent: true,
+          opacity: hasData ? 0.62 : 0.34,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      mesh.userData.pick = {
+        kind: "layer",
+        label: hasData ? "Soil volume — ESTIMATED (global model)" : `Soil volume — ${soil.state ?? "NO_DATA"}`,
+        note: soil.note,
+      } satisfies TwinPick;
+      lg.group.add(mesh);
+      lg.belowObjects.push(mesh);
+      pickables.push({ obj: mesh, pick: mesh.userData.pick as TwinPick });
+    }
 
-    // vertical wall edges make the slice thickness legible
-    const wire = new THREE.LineSegments(
-      new THREE.EdgesGeometry(geo),
-      new THREE.LineBasicMaterial({ color: hasData ? 0xd9b98a : 0x8fa89a, transparent: true, opacity: 0.8 }),
-    );
-    lg.group.add(wire);
-    lg.belowObjects.push(wire);
-    pickables.push({ obj: wire, pick: mesh.userData.pick as TwinPick });
+    // vertical wall edges make each band's thickness legible
+    for (const g of geos) {
+      const wire = new THREE.LineSegments(
+        new THREE.EdgesGeometry(g),
+        new THREE.LineBasicMaterial({ color: hasData ? 0xd9b98a : 0x8fa89a, transparent: true, opacity: 0.8 }),
+      );
+      lg.group.add(wire);
+      lg.belowObjects.push(wire);
+    }
 
     // depth ruler ticks along the side (display scale only)
     for (let d = 2; d < SOIL_DEPTH_M; d += 2) {
@@ -490,8 +617,13 @@ export function buildTwinScene(
       lg.belowObjects.push(tick);
     }
 
-    const stateTag = hasData ? "SOIL — ESTIMATED (model)" : `SOIL — ${soil.state ?? "NO_DATA"}`;
-    const lbl = cssLabel(`2 · ${stateTag} — DISPLAY SCALE`, hasData ? "#d9b98a" : "#9fb4c4", { size: 13 });
+    const profileTag = intervals.length > 1 ? `${intervals.length} real depth bands` : "single slab";
+    const stateTag = hasData ? `SOIL — ESTIMATED (SoilGrids · ${profileTag})` : `SOIL — ${soil.state ?? "NO_DATA"}`;
+    const lbl = cssLabel(
+      `2 · ${stateTag} — DISPLAY SCALE ×${verticalExaggeration} (0–60 cm real)`,
+      hasData ? "#d9b98a" : "#9fb4c4",
+      { size: 13 },
+    );
     lbl.position.set(0, -SOIL_DEPTH_M - 0.6, 0);
     lg.group.add(lbl);
     lg.belowObjects.push(lbl);
@@ -534,33 +666,48 @@ export function buildTwinScene(
     chip.userData.pick = {
       kind: "layer",
       label: `Crop display plate — MODELLED (${twin.field.crop_name})`,
-      note: `Procedural crop stand for "${twin.field.crop_name}" — MODELLED, never presented as measured. DISPLAY SCALE.`,
+      note: `Procedural crop stand for "${twin.field.crop_name}" — MODELLED, never presented as measured. DISPLAY SCALE: plant size and spacing are drawn for legibility, not to a real crop height.`,
     } satisfies TwinPick;
     lg.group.add(chip);
     lg.surfaceObjects.push(chip);
     pickables.push({ obj: chip, pick: chip.userData.pick as TwinPick });
-    const count = Math.min(110, Math.max(8, Math.round((twin.field.area_m2 ?? 30000) / 700)));
-    const pts = randomPointsInRings(twin.field.polygon_local_m, count, 7);
+    // Display-only layout density: about 12 rows whatever the field size, so a
+    // 30 ha field and a 0.5 ha field both read as a worked stand without
+    // spawning thousands of meshes.
+    const fbb = localBounds(twin.field.polygon_local_m);
+    const fWidth = Math.max(fbb.maxX - fbb.minX, 1);
+    const fDepth = Math.max(fbb.maxZ - fbb.minZ, 1);
+    const rowSpacingM = Math.max(fDepth / 12, 3);
+    const rowCount = Math.max(2, Math.round(fDepth / rowSpacingM));
+    const pts = cropRowPoints(twin.field.polygon_local_m, rowSpacingM, Math.max(fWidth / 16, 2.5));
+    // Shared unit geometries scaled per plant — ~190 plants must not allocate
+    // ~380 separate geometries. Height varies with position so the stand is not
+    // a uniform grid of identical cones, but every plant keeps the row heading.
     const plantMat = new THREE.MeshPhongMaterial({ color: 0x4fae5c, flatShading: true });
     const stemMat = new THREE.MeshPhongMaterial({ color: 0x3a7d46 });
+    const stemUnit = new THREE.CylinderGeometry(0.16, 0.24, 1, 6);
+    const canopyUnit = new THREE.ConeGeometry(1.05, 1, 7);
     for (const p of pts) {
-      const h = 3.4 + Math.abs(Math.sin(p.x * 3.7 + p.z * 1.3)) * 2.2; // display scale: taller stand
-      const plant = new THREE.Group();
-      const stem = new THREE.CylinderGeometry(0.16, 0.24, h * 0.55);
-      const stemMesh = new THREE.Mesh(stem, stemMat);
-      stemMesh.position.y = PLATE_M + h * 0.28;
-      plant.add(stemMesh);
-      const canopy = new THREE.ConeGeometry(1.05, h * 0.62, 7);
-      const canopyMesh = new THREE.Mesh(canopy, plantMat);
-      canopyMesh.position.y = PLATE_M + h * 0.78;
-      canopyMesh.rotation.y = p.x;
-      plant.add(canopyMesh);
-      plant.position.set(p.x, 0.3, p.z);
-      lg.group.add(plant);
-      lg.surfaceObjects.push(plant);
+      // Plant height is a DISPLAY size scaled from the slab, so a stand never
+      // reads as specks on a thick plate (it is not a measured crop height).
+      const h = PLATE_M * (0.85 + Math.abs(Math.sin(p.x * 0.37 + p.z * 0.13)) * 0.5);
+      const stemMesh = new THREE.Mesh(stemUnit, stemMat);
+      stemMesh.scale.set(1, h * 0.55, 1);
+      stemMesh.position.set(p.x, 0.3 + PLATE_M + h * 0.28, p.z);
+      lg.group.add(stemMesh);
+      lg.surfaceObjects.push(stemMesh);
+      const canopyMesh = new THREE.Mesh(canopyUnit, plantMat);
+      canopyMesh.scale.set(1, h * 0.62, 1);
+      canopyMesh.position.set(p.x, 0.3 + PLATE_M + h * 0.78, p.z);
+      lg.group.add(canopyMesh);
+      lg.surfaceObjects.push(canopyMesh);
     }
-    const lbl = cssLabel(`4 · CROP — MODELLED (procedural ${twin.field.crop_name}) · DISPLAY SCALE`, "#7be08d", { size: 13 });
-    lbl.position.set(0, PLATE_M + 8.6, 0);
+    const lbl = cssLabel(
+      `4 · CROP — MODELLED (${twin.field.crop_name} · ${rowCount} rows × ${Math.round(pts.length / Math.max(rowCount, 1))} plants) · DISPLAY SCALE`,
+      "#7be08d",
+      { size: 13 },
+    );
+    lbl.position.set(0, captionY(2.6), 0);
     lg.group.add(lbl);
     lg.surfaceObjects.push(lbl);
   }
@@ -574,10 +721,10 @@ export function buildTwinScene(
     lg.surfaceObjects.push(chip);
     sensors.devices.forEach((d, i) => {
       const color = d.status === "online" ? 0x3fd97c : d.status === "error" ? 0xf0716e : 0xf5b942;
-      const m = new THREE.Mesh(new THREE.SphereGeometry(2.1, 18, 18), new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.35 }));
+      const m = new THREE.Mesh(new THREE.SphereGeometry(markerM, 18, 18), new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.35 }));
       const a = (i / Math.max(sensors.devices.length, 1)) * Math.PI * 2;
-      const radius = Math.min(span * 0.32, 40);
-      m.position.set(Math.cos(a) * radius, PLATE_M + 1.2, Math.sin(a) * radius);
+      const radius = span * 0.3;
+      m.position.set(Math.cos(a) * radius, PLATE_M * 1.15, Math.sin(a) * radius);
       m.userData.pick = {
         kind: "sensor",
         id: d.name,
@@ -588,8 +735,8 @@ export function buildTwinScene(
       lg.surfaceObjects.push(m);
       pickables.push({ obj: m, pick: m.userData.pick as TwinPick });
     });
-    const lbl = cssLabel(`5 · ${sensors.state === "WAITING_FOR_DEVICE" ? "SENSOR — WAITING_FOR_DEVICE" : "SENSOR — NO_DATA"}`, "#f5b942", { size: 13 });
-    lbl.position.set(0, PLATE_M + 3.2, 0);
+    const lbl = cssLabel(`6 · SENSOR — ${sensors.state} (${sensors.devices.length} registered)`, "#f5b942", { size: 13 });
+    lbl.position.set(0, captionY(0.9), 0);
     lg.group.add(lbl);
     lg.surfaceObjects.push(lbl);
   }
@@ -606,7 +753,7 @@ export function buildTwinScene(
     lg.surfaceObjects.push(chip);
     const railX = -span * 0.95;
     const railMat = new THREE.LineBasicMaterial({ color: 0x5da9f6, transparent: true, opacity: 0.55 });
-    const railPts = [new THREE.Vector3(railX, PLATE_M + 0.4, -span * 0.42), new THREE.Vector3(railX, PLATE_M + 0.4, span * 0.42)];
+    const railPts = [new THREE.Vector3(railX, PLATE_M * 1.05, -span * 0.42), new THREE.Vector3(railX, PLATE_M * 1.05, span * 0.42)];
     const rail = new THREE.Line(new THREE.BufferGeometry().setFromPoints(railPts), railMat);
     lg.group.add(rail);
     lg.surfaceObjects.push(rail);
@@ -616,8 +763,8 @@ export function buildTwinScene(
       const z = -span * 0.42 + frac * span * 0.84;
       const cloud = a.cloud_cover ?? 0;
       const color = cloud > 70 ? 0xf58a87 : cloud > 30 ? 0xf5b942 : 0x5dd99a;
-      const m = new THREE.Mesh(new THREE.SphereGeometry(cloud > 70 ? 2 : 1.7, 12, 12), new THREE.MeshBasicMaterial({ color }));
-      m.position.set(railX, PLATE_M + 1.4, z);
+      const m = new THREE.Mesh(new THREE.SphereGeometry(markerM * (cloud > 70 ? 1.15 : 1), 12, 12), new THREE.MeshBasicMaterial({ color }));
+      m.position.set(railX, PLATE_M * 1.2, z);
       m.userData.pick = {
         kind: "acquisition",
         id: a.id,
@@ -628,8 +775,8 @@ export function buildTwinScene(
       lg.surfaceObjects.push(m);
       pickables.push({ obj: m, pick: m.userData.pick as TwinPick });
     });
-    const lbl = cssLabel(`6 · SATELLITE — ${sat.count} acquisitions (metadata)`, "#7db9f8", { size: 13 });
-    lbl.position.set(railX, PLATE_M + 3.4, 0);
+    const lbl = cssLabel(`7 · SATELLITE — ${sat.count} acquisitions (metadata)`, "#7db9f8", { size: 13 });
+    lbl.position.set(railX, captionY(1.2), 0);
     lg.group.add(lbl);
     lg.surfaceObjects.push(lbl);
   }
@@ -644,9 +791,9 @@ export function buildTwinScene(
     lg.surfaceObjects.push(chip);
     const levelColor = (lv: string) => (lv === "HIGH" ? 0xf0716e : lv === "MEDIUM" ? 0xf5b942 : lv === "LOW" ? 0x3fd97c : 0xa9b8c9);
     intel.risks.forEach((r, i) => {
-      const m = new THREE.Mesh(new THREE.TetrahedronGeometry(2.6), new THREE.MeshPhongMaterial({ color: levelColor(r.level), emissive: levelColor(r.level), emissiveIntensity: 0.5, flatShading: true }));
+      const m = new THREE.Mesh(new THREE.TetrahedronGeometry(markerM * 1.4), new THREE.MeshPhongMaterial({ color: levelColor(r.level), emissive: levelColor(r.level), emissiveIntensity: 0.5, flatShading: true }));
       const a = (i / Math.max(intel.risks.length, 1)) * Math.PI * 2;
-      m.position.set(Math.cos(a) * span * 0.4, PLATE_M + 3.4, Math.sin(a) * span * 0.4);
+      m.position.set(Math.cos(a) * span * 0.4, PLATE_M * 1.6, Math.sin(a) * span * 0.4);
       m.userData.pick = {
         kind: "risk",
         id: r.id,
@@ -658,8 +805,8 @@ export function buildTwinScene(
       pickables.push({ obj: m, pick: m.userData.pick as TwinPick });
     });
     intel.anomalies.slice(0, 3).forEach((a, i) => {
-      const m = new THREE.Mesh(new THREE.OctahedronGeometry(2.2), new THREE.MeshPhongMaterial({ color: 0xff9d5c, emissive: 0xff9d5c, emissiveIntensity: 0.4, flatShading: true }));
-      m.position.set(span * (0.15 + i * 0.22), PLATE_M + 2.2, -span * 0.3);
+      const m = new THREE.Mesh(new THREE.OctahedronGeometry(markerM * 1.1), new THREE.MeshPhongMaterial({ color: 0xff9d5c, emissive: 0xff9d5c, emissiveIntensity: 0.4, flatShading: true }));
+      m.position.set(span * (0.15 + i * 0.22), PLATE_M * 1.35, -span * 0.3);
       m.userData.pick = {
         kind: "anomaly",
         id: a.id,
@@ -671,8 +818,8 @@ export function buildTwinScene(
       pickables.push({ obj: m, pick: m.userData.pick as TwinPick });
     });
     intel.investigations.slice(0, 2).forEach((inv, i) => {
-      const m = new THREE.Mesh(new THREE.OctahedronGeometry(2.8), new THREE.MeshPhongMaterial({ color: 0xa78bfa, emissive: 0xa78bfa, emissiveIntensity: 0.35 }));
-      m.position.set(span * (0.2 + i * 0.3), PLATE_M + 2.4, span * 0.28);
+      const m = new THREE.Mesh(new THREE.OctahedronGeometry(markerM * 1.5), new THREE.MeshPhongMaterial({ color: 0xa78bfa, emissive: 0xa78bfa, emissiveIntensity: 0.35 }));
+      m.position.set(span * (0.2 + i * 0.3), PLATE_M * 1.45, span * 0.28);
       m.userData.pick = {
         kind: "investigation",
         id: inv.id,
@@ -683,14 +830,67 @@ export function buildTwinScene(
       lg.surfaceObjects.push(m);
       pickables.push({ obj: m, pick: m.userData.pick as TwinPick });
     });
-    const legend = cssLabel("7 · INTELLIGENCE markers — real engine output · click to inspect", "#a99efb", { size: 13 });
-    legend.position.set(0, PLATE_M + 1.2, span * 0.8);
+    const legend = cssLabel("8 · INTELLIGENCE markers — real engine output · click to inspect", "#a99efb", { size: 13 });
+    legend.position.set(0, captionY(0.1), span * 0.8);
     lg.group.add(legend);
     lg.surfaceObjects.push(legend);
   }
 
-  // water layer renders nothing spatially (state conveyed in the panels) — the
-  // volume is never fabricated. Only its NOT_CONFIGURED/NO_DATA state is shown.
+  // ---- water context (real, but distance-only) -------------------------------
+  // The recorded water evidence is a COUNT of mapped OSM features within 6 km and
+  // the DISTANCE to the nearest one. The OSM features carry real geometry, but
+  // the adapter keeps only the aggregate, so there is no footprint to draw and
+  // critically no DIRECTION. The layer therefore draws a slab plus a ring at the
+  // true nearest distance and states that the direction is unrecorded — it never
+  // paints water inside the field that was not mapped there.
+  const water = twin.layers.water;
+  const waterFeatures = water.features_6km ?? 0;
+  const waterNearestKm = water.nearest_km ?? 0;
+  if (twin.field.polygon_local_m.length > 0 && (waterFeatures > 0 || waterNearestKm > 0)) {
+    const lg = makeLayer("water", WATER_LIFT);
+    const chip = makePlate(PLATE_M, 0x2b6d8f, 0.55);
+    chip.userData.pick = {
+      kind: "layer",
+      label: "Water context — mapped features (OSM)",
+      note: water.note,
+    } satisfies TwinPick;
+    lg.group.add(chip);
+    lg.surfaceObjects.push(chip);
+    pickables.push({ obj: chip, pick: chip.userData.pick as TwinPick });
+
+    const nearestM = waterNearestKm * 1000;
+    const ringFits = nearestM > 0 && nearestM <= extent;
+    if (ringFits) {
+      const ringPts: THREE.Vector3[] = [];
+      const seg = 96;
+      for (let i = 0; i <= seg; i++) {
+        const a = (i / seg) * Math.PI * 2;
+        ringPts.push(new THREE.Vector3(Math.cos(a) * nearestM, PLATE_M * 1.02, Math.sin(a) * nearestM));
+      }
+      const ring = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(ringPts),
+        new THREE.LineDashedMaterial({ color: 0x63c9ff, dashSize: 14, gapSize: 9, transparent: true, opacity: 0.75 }),
+      );
+      ring.computeLineDistances();
+      ring.userData.pick = {
+        kind: "layer",
+        label: `Nearest mapped water — ${waterNearestKm} km`,
+        note: "The distance is real (OpenStreetMap via Overpass). The DIRECTION was not recorded, so this ring marks distance only — it is NOT the location of a water body.",
+      } satisfies TwinPick;
+      lg.group.add(ring);
+      lg.surfaceObjects.push(ring);
+      pickables.push({ obj: ring, pick: ring.userData.pick as TwinPick });
+    }
+
+    const lbl = cssLabel(
+      `5 · WATER — ${waterFeatures} mapped features within 6 km · nearest ${waterNearestKm || "?"} km${ringFits ? "" : " (beyond scene)"} · no direction recorded`,
+      "#63c9ff",
+      { size: 11.5 },
+    );
+    lbl.position.set(0, captionY(1.2), span * 0.55);
+    lg.group.add(lbl);
+    lg.surfaceObjects.push(lbl);
+  }
 
   // ---- picking (click-to-inspect) --------------------------------------------
   const raycaster = new THREE.Raycaster();
@@ -762,10 +962,15 @@ export function buildTwinScene(
     grid.visible = !on;
     const soil = layerGroups.get("soil");
     if (soil) {
-      const mat = (soil.group.children[0] as THREE.Mesh | undefined)?.material as THREE.MeshPhongMaterial | undefined;
-      if (mat) {
-        mat.opacity = on ? 0.85 : soil.belowObjects.length > 0 && twin.layers.soil.properties?.length ? 0.62 : 0.34;
-        mat.needsUpdate = true;
+      // Every depth band is a separate mesh now, so raise them all together.
+      const base = twin.layers.soil.properties?.length ? 0.72 : 0.34;
+      for (const child of soil.group.children) {
+        if (!(child instanceof THREE.Mesh)) continue;
+        const mat = child.material as THREE.MeshPhongMaterial;
+        if (mat && typeof mat.opacity === "number") {
+          mat.opacity = on ? Math.min(0.95, base + 0.2) : base;
+          mat.needsUpdate = true;
+        }
       }
     }
     const roots = layerGroups.get("roots");

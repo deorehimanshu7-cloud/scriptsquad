@@ -27,8 +27,11 @@ export function twinRoutes(db: AppDb): Router {
       }
 
       // --- terrain (real DEM grid samples when available, else honest single-point)
+      // The grid row is deliberately NOT part of this limited query: it carries
+      // the whole sample set, and letting it compete for the LIMIT with the
+      // summary rows would evict the statistics the layer reports.
       const terrainRows = db.conn
-        .query("SELECT id, sub_type, value, unit, state, source, geometry, retrieved_at FROM evidence WHERE field_id=? AND domain='terrain' ORDER BY retrieved_at DESC LIMIT 120")
+        .query("SELECT id, sub_type, value, unit, state, source, geometry, retrieved_at FROM evidence WHERE field_id=? AND domain='terrain' AND sub_type != 'dem_grid' ORDER BY retrieved_at DESC LIMIT 120")
         .all(field.id) as {
         id: string;
         sub_type: string;
@@ -40,22 +43,48 @@ export function twinRoutes(db: AppDb): Router {
         retrieved_at: string;
       }[];
       const terrainBySub = new Map(terrainRows.map((r) => [r.sub_type, r]));
-      const demSamples = terrainRows
-        .filter((r) => r.sub_type === "elevation_sample_m" && r.value !== null && r.geometry)
-        .map((r) => {
-          let lat = field.centroid_lat;
-          let lon = field.centroid_lon;
-          try {
-            const g = JSON.parse(r.geometry as string) as { type: string; coordinates: number[] };
-            if (g.type === "Point" && g.coordinates.length >= 2) {
-              lon = g.coordinates[0];
-              lat = g.coordinates[1];
-            }
-          } catch {
-            /* keep centroid */
+
+      // Current shape: one MultiPoint row whose third ordinate is the elevation
+      // (lon, lat, elevation) for every sampled DEM cell.
+      const gridRow = db.conn
+        .query(
+          "SELECT geometry, retrieved_at FROM evidence WHERE field_id=? AND domain='terrain' AND sub_type='dem_grid' ORDER BY retrieved_at DESC LIMIT 1",
+        )
+        .get(field.id) as { geometry: string | null; retrieved_at: string } | undefined;
+      let demSamples: { lat: number; lon: number; elevation_m: number }[] = [];
+      if (gridRow?.geometry) {
+        try {
+          const g = JSON.parse(gridRow.geometry) as { type: string; coordinates?: number[][] };
+          if (g.type === "MultiPoint" && Array.isArray(g.coordinates)) {
+            demSamples = g.coordinates
+              .filter((c) => Array.isArray(c) && c.length >= 3 && c.every((v) => Number.isFinite(v)))
+              .map((c) => ({ lon: c[0], lat: c[1], elevation_m: c[2] }));
           }
-          return { lat, lon, elevation_m: r.value as number };
-        });
+        } catch {
+          /* fall through to the legacy point rows below */
+        }
+      }
+      if (demSamples.length === 0) {
+        // Legacy shape: databases written before the grid row stored one point
+        // row per DEM sample. Still read, so an un-refreshed field keeps its
+        // real terrain instead of reporting NO_DATA.
+        demSamples = terrainRows
+          .filter((r) => r.sub_type === "elevation_sample_m" && r.value !== null && r.geometry)
+          .map((r) => {
+            let lat = field.centroid_lat;
+            let lon = field.centroid_lon;
+            try {
+              const g = JSON.parse(r.geometry as string) as { type: string; coordinates: number[] };
+              if (g.type === "Point" && g.coordinates.length >= 2) {
+                lon = g.coordinates[0];
+                lat = g.coordinates[1];
+              }
+            } catch {
+              /* keep centroid */
+            }
+            return { lat, lon, elevation_m: r.value as number };
+          });
+      }
       const terrainLatest = terrainRows[0];
       const terrain = {
         state: terrainRows.length > 0 ? "PARTIAL" : "NO_DATA",
@@ -74,6 +103,7 @@ export function twinRoutes(db: AppDb): Router {
         note:
           demSamples.length >= 4
             ? `Real DEM grid: ${demSamples.length} SRTM/ASTER raster samples inside the field (DERIVED). The twin surface is displaced from these actual elevations; slope/aspect (when present) are derivations from the real samples, not measurements.`
+              + (demSamples.length >= 12 ? "" : " Sample spacing is coarser than ~30 m — this field is smaller than the DEM grid target.")
             : terrainLatest
               ? "CENTROID ELEVATION only (single point). No DEM grid — the twin renders a flat surface and slope/aspect stay UNKNOWN."
               : "No terrain evidence recorded.",
@@ -81,15 +111,32 @@ export function twinRoutes(db: AppDb): Router {
 
       // --- soil (estimates only, never measurements)
       const soilRows = db.conn
-        .query("SELECT sub_type, value, unit, state, source, provenance FROM evidence WHERE field_id=? AND domain='soil' ORDER BY observed_at DESC LIMIT 12")
+        .query("SELECT sub_type, value, unit, state, source, provenance FROM evidence WHERE field_id=? AND domain='soil' ORDER BY observed_at DESC LIMIT 40")
         .all(field.id) as { sub_type: string; value: number | null; unit: string | null; state: string; source: string; provenance: string }[];
       const soilHealth = db.conn
         .query("SELECT status, last_error FROM provider_health WHERE provider='soilgrids'")
         .get() as { status: string; last_error: string | null } | undefined;
+      // `sub_type` is `<property>@<depth>` (e.g. clay@5-15cm); split it so the
+      // 3D scene can build real depth bands without parsing display strings.
+      const soilProps = soilRows.map((s) => {
+        const at = s.sub_type.indexOf("@");
+        return {
+          property: at > 0 ? s.sub_type.slice(0, at) : s.sub_type,
+          depth: at > 0 ? s.sub_type.slice(at + 1) : null,
+          value: s.value,
+          unit: s.unit,
+          state: s.state,
+          source: s.source,
+        };
+      });
+      const soilDepths = [...new Set(soilProps.map((p) => p.depth).filter((d): d is string => !!d))].sort(
+        (a, b) => parseFloat(a) - parseFloat(b),
+      );
       const soil = {
         state: soilRows.length > 0 ? "ESTIMATED" : "NO_DATA",
         provider_status: soilHealth?.status ?? "NOT_CONFIGURED",
-        properties: soilRows.map((s) => ({ property: s.sub_type, value: s.value, unit: s.unit, state: s.state, source: s.source })),
+        properties: soilProps,
+        depths: soilDepths,
         note:
           soilRows.length > 0
             ? "SoilGrids v2.0 global model estimates (ESTIMATED — not field measurements)."
@@ -111,8 +158,20 @@ export function twinRoutes(db: AppDb): Router {
       // --- water (source-gated)
       const waterRows = db.conn.query("SELECT COUNT(*) as n FROM evidence WHERE field_id=? AND domain='water'").get(field.id) as { n: number };
       const waterHealth = db.conn.query("SELECT status FROM provider_health WHERE provider='water-india'").get() as { status: string } | undefined;
+      // The recorded water evidence is aggregate only — a count of mapped OSM
+      // features and the distance to the nearest one. There is no footprint and
+      // no direction, and the 3D layer must not imply otherwise, so both numbers
+      // are surfaced verbatim.
+      const waterStats = db.conn
+        .query(
+          "SELECT sub_type, value FROM evidence WHERE field_id=? AND domain='water' AND sub_type IN ('mapped_water_features_6km','nearest_water_distance_km')",
+        )
+        .all(field.id) as { sub_type: string; value: number | null }[];
+      const waterVal = (sub: string) => waterStats.find((w) => w.sub_type === sub)?.value ?? null;
       const water = {
         state: waterRows.n > 0 ? "PARTIAL" : waterHealth?.status === "NOT_CONFIGURED" ? "NOT_CONFIGURED" : "NO_DATA",
+        features_6km: waterVal("mapped_water_features_6km"),
+        nearest_km: waterVal("nearest_water_distance_km"),
         note:
           waterRows.n > 0
             ? "Water evidence recorded for this field."

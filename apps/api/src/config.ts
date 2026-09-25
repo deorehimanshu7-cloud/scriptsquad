@@ -32,6 +32,9 @@ export const config = {
 
   // providers
   openMeteoBaseUrl: env("OPEN_METEO_BASE_URL", "https://api.open-meteo.com/v1"),
+  // Air quality lives on a separate Open-Meteo host. Same provider, same free
+  // key-less access — CAMS model output (PM2.5 / PM10 / dust / AQI).
+  openMeteoAirQualityBaseUrl: env("OPEN_METEO_AIR_QUALITY_BASE_URL", "https://air-quality-api.open-meteo.com/v1"),
   openTopoDataBaseUrl: env("OPENTOPODATA_BASE_URL", "https://api.opentopodata.org"),
   copernicusStacUrl: env("COPERNICUS_STAC_URL", "https://stac.dataspace.copernicus.eu/v1"),
   copernicusTokenUrl:

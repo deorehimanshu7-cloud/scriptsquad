@@ -38,6 +38,46 @@ function circleRing(lat: number, lon: number, radiusM: number, segments = 48): n
   return pts;
 }
 
+/**
+ * Where a coordinate came from. This matters for honesty: a GPS fix and a
+ * city-level network guess are NOT the same quality of evidence, and the UI
+ * must say which one it used.
+ */
+type LocSource = "gps" | "network" | "manual";
+
+/** How long to wait for a satellite fix before falling back to the network IP. */
+const GPS_BUDGET_MS = 8_000;
+
+/**
+ * Approximate location from the network (no permission prompt, no GPS).
+ *
+ * Why this exists: when the browser denies or cannot provide a GPS fix, the
+ * "use my current location" button used to just fail — so the picker stayed on
+ * the last coordinates forever and every new field landed in the same place.
+ * This gives an honest, clearly-labelled fallback instead.
+ *
+ * Accuracy is CITY LEVEL (kilometres), never a survey fix.
+ */
+async function lookupNetworkLocation(): Promise<{ lat: number; lon: number; label: string } | null> {
+  const providers = ["https://ipwho.is/", "https://ipapi.co/json/"];
+  for (const p of providers) {
+    try {
+      const res = await fetch(p, { headers: { accept: "application/json" } });
+      if (!res.ok) continue;
+      const d = (await res.json()) as { latitude?: number; longitude?: number; city?: string; region?: string; success?: boolean };
+      if (d.success === false) continue;
+      const lat = Number(d.latitude);
+      const lon = Number(d.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
+      const label = [d.city, d.region].filter(Boolean).join(", ");
+      return { lat: Number(lat.toFixed(6)), lon: Number(lon.toFixed(6)), label };
+    } catch {
+      // network blocked / provider down — try the next one, then give up honestly
+    }
+  }
+  return null;
+}
+
 export default function Fields() {
   const { fields, farms, activeFieldId } = useApp();
   const [tab, setTab] = useState<"list" | "create">("list");
@@ -118,6 +158,8 @@ function CreateFlow() {
   // point + radius / current-location mode
   const [loc, setLoc] = useState<{ lat: number; lon: number } | null>(null);
   const [locState, setLocState] = useState<"idle" | "locating" | "ok" | "denied" | "unsupported">("idle");
+  const [locSource, setLocSource] = useState<LocSource | null>(null);
+  const [netLabel, setNetLabel] = useState<string | null>(null);
   const [radiusM, setRadiusM] = useState(500);
   const [manualRefine, setManualRefine] = useState(false);
   const [latDraft, setLatDraft] = useState("");
@@ -212,25 +254,70 @@ function CreateFlow() {
     m.flyTo({ center: [loc.lon, loc.lat], zoom: 15 });
   }, [loc, geomSource]);
 
+  /** Adopt a coordinate pair from any source, recording which source it was. */
+  const applyLocation = (lat: number, lon: number, source: LocSource) => {
+    setLoc({ lat, lon });
+    setLatDraft(String(lat));
+    setLonDraft(String(lon));
+    setLocSource(source);
+    setLocState("ok");
+  };
+
+  /**
+   * Fallback path when GPS is denied or unavailable: ask the network instead.
+   * Never invents a coordinate — if all providers fail the state stays honest.
+   */
+  const fallbackToNetwork = async (gpsState: "denied" | "unsupported") => {
+    setLocState("locating");
+    const net = await lookupNetworkLocation();
+    if (!net) {
+      setLocState(gpsState);
+      return;
+    }
+    setNetLabel(net.label || null);
+    applyLocation(net.lat, net.lon, "network");
+  };
+
   const useCurrentLocation = () => {
     if (!("geolocation" in navigator)) {
-      setLocState("unsupported");
+      void fallbackToNetwork("unsupported");
       return;
     }
     setLocState("locating");
+    // The browser's own timeout only starts once permission has been granted, so
+    // an unanswered permission prompt leaves getCurrentPosition pending forever
+    // and the button stuck on "Locating…". This watchdog guarantees the click
+    // always resolves. A late GPS fix still wins: the success callback stays
+    // installed and upgrades the coordinate if it arrives after the watchdog.
+    let settled = false;
+    const netPromise = lookupNetworkLocation().catch(() => null);
+    const watchdog = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      void netPromise.then((net) => {
+        if (net) {
+          setNetLabel(net.label || null);
+          applyLocation(net.lat, net.lon, "network");
+        } else {
+          setLocState("unsupported");
+        }
+      });
+    }, GPS_BUDGET_MS);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const lat = Number(pos.coords.latitude.toFixed(6));
-        const lon = Number(pos.coords.longitude.toFixed(6));
-        setLoc({ lat, lon });
-        setLatDraft(String(lat));
-        setLonDraft(String(lon));
-        setLocState("ok");
+        settled = true;
+        window.clearTimeout(watchdog);
+        applyLocation(Number(pos.coords.latitude.toFixed(6)), Number(pos.coords.longitude.toFixed(6)), "gps");
       },
       (err) => {
-        // 1 = PERMISSION_DENIED — surface the exact state, never silently
-        // fall back to an unrelated default location.
-        setLocState(err.code === 1 ? "denied" : "unsupported");
+        // Already resolved from the network by the watchdog — do not downgrade a
+        // usable (if approximate) location to an error state.
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(watchdog);
+        // 1 = PERMISSION_DENIED — surface the exact state, then try the
+        // network so the button is still useful. Never a silent default.
+        void fallbackToNetwork(err.code === 1 ? "denied" : "unsupported");
       },
       { timeout: 12_000, maximumAge: 60_000 },
     );
@@ -243,8 +330,7 @@ function CreateFlow() {
       toast("Enter valid latitude (−90…90) and longitude (−180…180)", "error");
       return;
     }
-    setLoc({ lat, lon });
-    setLocState("ok");
+    applyLocation(lat, lon, "manual");
   };
 
   const finalGeometry = (() => {
@@ -377,12 +463,28 @@ function CreateFlow() {
               </div>
               <div style={{ fontSize: 12.5, marginTop: 8 }}>
                 {locState === "ok" && loc && (
-                  <span className="ok-text">
-                    Location set: {loc.lat.toFixed(5)}, {loc.lon.toFixed(5)} — circular AOI of {radiusM >= 1000 ? `${radiusM / 1000} km` : `${radiusM} m`} generated (~
-                    {(Math.PI * (radiusM / 1000) ** 2).toFixed(2)} km²). Click the map afterwards to add refinement points.
+                  <span className={locSource === "network" ? "warn-text" : "ok-text"}>
+                    {locSource === "gps" && "GPS fix: "}
+                    {locSource === "network" && "Approximate location from your network — "}
+                    {locSource === "manual" && "Typed coordinates: "}
+                    {loc.lat.toFixed(5)}, {loc.lon.toFixed(5)}
+                    {locSource === "network" && netLabel ? ` (${netLabel}, city level)` : ""} — circular AOI of{" "}
+                    {radiusM >= 1000 ? `${radiusM / 1000} km` : `${radiusM} m`} generated (~{(Math.PI * (radiusM / 1000) ** 2).toFixed(2)} km²). Click the map afterwards to add refinement points.
                   </span>
                 )}
-                {locState === "denied" && <span className="err-text">LOCATION_PERMISSION_DENIED — allow location access, or enter coordinates manually above.</span>}
+                {locState === "ok" && locSource === "network" && (
+                  <div className="faint" style={{ marginTop: 4 }}>
+                    No satellite fix was returned (permission denied, unavailable, or no answer in time), so this came from your
+                    connection&rsquo;s network address — <strong>not</strong> a location fix from the device.
+                    Accuracy is city level and it can be wrong by a long way (mobile and VPN connections especially).
+                    For a real boundary, use “Draw on map”, or type the coordinates from a phone at the field.
+                  </div>
+                )}
+                {locState === "denied" && (
+                  <span className="err-text">
+                    LOCATION_PERMISSION_DENIED and no network location could be resolved — allow location access, or enter coordinates manually above.
+                  </span>
+                )}
                 {locState === "unsupported" && <span className="err-text">Location unavailable in this browser — enter coordinates manually above.</span>}
                 {locState === "idle" && <span className="faint">Use your current location or type coordinates. The AOI circle is an approximate discovery boundary — switch to “Draw on map” to refine it into a parcel boundary.</span>}
                 {manualRefine && (

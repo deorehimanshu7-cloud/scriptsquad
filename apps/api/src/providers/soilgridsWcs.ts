@@ -15,7 +15,9 @@ import { SOIL_PROPERTY_UNITS, type SoilPropertyRow } from "./soilgrids";
  *   - every row is emitted in the exact unit conventions the REST API used
  *     (declared by ISRIC's own layer titles, e.g. "pH*10", "dg/kg", "g/kg"),
  *   - callers must store the rows with state ESTIMATED,
- *   - the layer only covers the 0-5 cm depth on this fallback path,
+ *   - every standard depth interval is available here as its own coverage, so
+ *     this path returns a real depth profile (see SOILGRID_DEPTHS) rather than
+ *     topsoil only,
  *   - ISRIC's coverage has gaps (nodata cells); only valid cells are averaged
  *     and a property with no valid cells nearby is reported as null.
  *
@@ -30,7 +32,46 @@ import { SOIL_PROPERTY_UNITS, type SoilPropertyRow } from "./soilgrids";
  *   nitrogen → "(cg/kg)" = g/kg * 10      → REST convention mean = raw / 10
  */
 
-const PROPERTIES = ["phh2o", "soc", "clay", "sand", "silt", "bdod", "cec", "nitrogen"] as const;
+/**
+ * Property × depth request plan.
+ *
+ * The WCS server publishes every SoilGrids v2.0 property at each of the six
+ * standard depth intervals as its own coverage (`<property>_<depth>_mean`), so
+ * the full soil PROFILE is freely available here — the REST adapter's depth
+ * parameters were the only reason this path used to be topsoil-only. Texture
+ * (clay, sand), organic carbon and bulk density are fetched at every interval
+ * because they are what actually varies with depth; the remaining properties
+ * are fetched at the topsoil interval only, which keeps the request count (and
+ * therefore the throttled fetch time) bounded.
+ */
+const PROFILE_PROPERTIES = ["clay", "sand", "soc", "bdod"] as const;
+const TOPSOIL_ONLY_PROPERTIES = ["phh2o", "silt", "cec", "nitrogen"] as const;
+
+/** Real SoilGrids v2.0 standard depth intervals, shallowest first (cm). */
+export const SOILGRID_DEPTHS = ["0-5cm", "5-15cm", "15-30cm", "30-60cm"] as const;
+
+/** One (property, depth) fetch task. */
+interface SoilTask {
+  property: string;
+  depth: string;
+}
+
+/**
+ * Fetch order: the complete topsoil set first, then the deeper intervals.
+ * The tile server is throttled and the caller has a timeout, so a run that is
+ * cut short still yields every property at 0-5 cm and simply omits the deeper
+ * bands (which the twin then reports as not sampled) instead of returning a
+ * profile that is missing its top band.
+ */
+function soilFetchPlan(): SoilTask[] {
+  const tasks: SoilTask[] = [];
+  for (const property of PROFILE_PROPERTIES) tasks.push({ property, depth: SOILGRID_DEPTHS[0] });
+  for (const property of TOPSOIL_ONLY_PROPERTIES) tasks.push({ property, depth: SOILGRID_DEPTHS[0] });
+  for (const property of PROFILE_PROPERTIES) {
+    for (const depth of SOILGRID_DEPTHS.slice(1)) tasks.push({ property, depth });
+  }
+  return tasks;
+}
 
 /** Divide the raw WCS integer by this to get the REST-convention value. */
 const WCS_TO_REST_SCALE: Record<string, number> = {
@@ -47,13 +88,13 @@ const WCS_TO_REST_SCALE: Record<string, number> = {
 /** Generous plausibility windows in REST-convention units (guards against nodata/scale garbage). */
 const PLAUSIBLE: Record<string, [number, number]> = {
   phh2o: [20, 140], // pH*10 → pH 2.0–14.0 after the /10 conversion downstream
-  soc: [1, 2000], // g/kg
+  soc: [0.1, 2000], // g/kg — subsoil carbon is genuinely low in this unit
   clay: [1, 1000], // g/kg
   sand: [1, 1000],
   silt: [1, 1000],
   bdod: [10, 260], // cg/cm3
   cec: [1, 600], // mmol(c)/kg
-  nitrogen: [1, 1000], // g/kg
+  nitrogen: [0.1, 1000], // g/kg
 };
 
 const WCS_ENDPOINT = "https://maps.isric.org/mapserv";
@@ -201,13 +242,13 @@ function toMercator(lat: number, lon: number): [number, number] {
   return [x, y];
 }
 
-async function fetchCoverageMean(property: string, mx: number, my: number, halfMeters: number): Promise<number | null> {
+async function fetchCoverageMean(property: string, depth: string, mx: number, my: number, halfMeters: number): Promise<number | null> {
   const params = new URLSearchParams({
     map: `/map/${property}.map`,
     SERVICE: "WCS",
     VERSION: "1.1.2",
     REQUEST: "GetCoverage",
-    IDENTIFIER: `${property}_0-5cm_mean`,
+    IDENTIFIER: `${property}_${depth}_mean`,
     BBOX: `${mx - halfMeters},${my - halfMeters},${mx + halfMeters},${my + halfMeters}`,
     CRS: "EPSG:3857",
     FORMAT: "image/tiff",
@@ -236,10 +277,12 @@ async function fetchCoverageMean(property: string, mx: number, my: number, halfM
 /**
  * Fallback SoilGrids query over the live WCS map server (EPSG:3857).
  * Returns rows in the same shape/unit conventions as the REST adapter (the
- * caller must store them with state ESTIMATED). Only the 0-5 cm depth exists
- * on this path; each value is the mean of the valid 250 m modelled cells in a
- * ~3 km box around the field centroid (widened to ~8 km when the inner box is
- * entirely nodata — ISRIC's coverage has gaps). Properties with no valid cells
+ * caller must store them with state ESTIMATED). Returns a real depth profile:
+ * texture, organic carbon and bulk density at every interval in
+ * SOILGRID_DEPTHS, the remaining properties at 0-5 cm (see soilFetchPlan).
+ * Each value is the mean of the valid 250 m modelled cells in a ~3 km box
+ * around the field centroid (widened to ~8 km when the inner box is entirely
+ * nodata — ISRIC's coverage has gaps). Properties/depths with no valid cells
  * nearby are omitted; if none come back at all the function throws.
  */
 /**
@@ -250,7 +293,7 @@ async function fetchCoverageMean(property: string, mx: number, my: number, halfM
 export async function pingSoilGridsWcs(): Promise<string> {
   const [mx, my] = toMercator(52.2, 0.1);
   for (const half of [1500, 4000]) {
-    const v = await fetchCoverageMean("phh2o", mx, my, half);
+    const v = await fetchCoverageMean("phh2o", SOILGRID_DEPTHS[0], mx, my, half);
     if (v !== null) return "ok";
   }
   throw new Error("SoilGrids WCS probe found no valid cells");
@@ -263,8 +306,8 @@ export async function getSoilPropertiesWcs(
   const [mx, my] = toMercator(lat, lon);
   const rows: SoilPropertyRow[] = [];
   let first = true;
-  for (const property of PROPERTIES) {
-    if (!first) await new Promise((res) => setTimeout(res, 1_300)); // tile server throttles bursts
+  for (const { property, depth } of soilFetchPlan()) {
+    if (!first) await new Promise((res) => setTimeout(res, 700)); // tile server throttles bursts
     first = false;
     let rawMean: number | null = null;
     // widen only when the inner box is genuinely empty (all-nodata cells);
@@ -278,7 +321,7 @@ export async function getSoilPropertiesWcs(
     for (const { half, retry } of attempts) {
       if (retry) await new Promise((res) => setTimeout(res, 2_000));
       try {
-        rawMean = await fetchCoverageMean(property, mx, my, half);
+        rawMean = await fetchCoverageMean(property, depth, mx, my, half);
       } catch {
         rawMean = null;
       }
@@ -292,7 +335,7 @@ export async function getSoilPropertiesWcs(
     if (!Number.isFinite(converted) || converted < lo || converted > hi) continue;
     rows.push({
       property,
-      depth: "0-5cm",
+      depth,
       mean: Math.round(converted * 10) / 10,
       uncertainty: null,
       unit: SOIL_PROPERTY_UNITS[property] ?? "",

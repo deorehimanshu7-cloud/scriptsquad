@@ -46,6 +46,16 @@ const DICT: Record<string, Entry> = {
     "टाइप करना चाहेंगे?",
     "टाइप करणार का?"
   ],
+  "voice.builtIn": ["Built-in grounded voice bot", "अंतर्निहित ग्राउंडेड वॉइस बॉट", "अंगभूत ग्राउंडेड व्हॉइस बॉट"],
+  "voice.builtInSub": [
+    "Tap once and speak — your question goes to this field's grounded assistant and the answer is read back to you.",
+    "एक बार टैप करें और बोलें — आपका सवाल इस फ़ील्ड के ग्राउंडेड सहायक को जाता है और उत्तर पढ़कर सुनाया जाता है।",
+    "एकदा टॅप करा आणि बोला — तुमचा प्रश्न या प्लॉटच्या ग्राउंडेड सहाय्यकाकडे जातो आणि उत्तर वाचून दाखवले जाते."
+  ],
+  "voice.voiceOn": ["Voice on", "आवाज़ चालू", "आवाज चालू"],
+  "voice.voiceOff": ["Voice off", "आवाज़ बंद", "आवाज बंद"],
+  "voice.yourQuestion": ["Your question", "आपका सवाल", "तुमचा प्रश्न"],
+  "voice.lastAnswer": ["Last answer", "पिछला उत्तर", "शेवटचे उत्तर"],
   "nav.system": ["System", "सिस्टम", "प्रणाली"],
   "nav.fields": ["Farms & fields", "खेत और फ़ील्ड", "शेत आणि प्लॉट"],
   "sec.layers": ["Evidence layers", "साक्ष्य परतें", "पुराव्याचे थर"],
@@ -471,6 +481,41 @@ const DICT: Record<string, Entry> = {
     "Satellite basemap is a generic basemap — not field-specific imagery.",
     "उपग्रह आधार नक्शा सामान्य है — फ़ील्ड-विशिष्ट इमेजरी नहीं।",
     "उपग्रह बेस नकाशा सामान्य आहे — प्लॉट-विशिष्ट प्रतिमा नाही.",
+  ],
+  // ------------------------------------------------------- basemap controls
+  "map.auto": ["Auto (clearest)", "ऑटो (सबसे स्पष्ट)", "ऑटो (सर्वात स्पष्ट)"],
+  "map.esri": ["High-res aerial", "हाई-रेस एरियल", "हाय-रेस हवाई"],
+  "map.s2": ["Sentinel-2", "सेंटिनल-2", "सेंटिनल-2"],
+  "map.dark": ["Dark map", "डार्क मैप", "डार्क नकाशा"],
+  "map.light": ["Light map", "लाइट मैप", "लाइट नकाशा"],
+  "map.noteAuto": [
+    "True-colour regional imagery when zoomed out, high-resolution aerial imagery when zoomed in.",
+    "दूर से देखने पर ट्रू-कलर क्षेत्रीय इमेजरी, पास से देखने पर हाई-रेस एरियल इमेजरी।",
+    "दूरून पाहताना खरे-रंग प्रादेशिक प्रतिमा, जवळून पाहताना उच्च-रिझोल्युशन हवाई प्रतिमा."
+  ],
+  "map.noteEsri": [
+    "High-resolution aerial/satellite imagery. Native detail runs out around zoom 19 — past that the service upscales.",
+    "हाई-रेस एरियल/उपग्रह इमेजरी। ज़ूम 19 के आसपास असली विवरण खत्म हो जाता है — उसके बाद सेवा अपस्केल करता है।",
+    "उच्च-रिझोल्युशन हवाई/उपग्रह प्रतिमा. झूम 19 च्या आसपास खरा तपशील संपतो — त्यानंतर सेवा अपस्केल करते."
+  ],
+  "map.noteS2": [
+    "Sentinel-2 cloudless 2024 true colour at 10 m. Sharper for regional context, but only 10 m — it cannot resolve a field boundary.",
+    "सेंटिनल-2 क्लाउडलेस 2024 ट्रू कलर, 10 मी. क्षेत्रीय संदर्भ के लिए बेहतर, लेकिन केवल 10 मी — खेत की सीमा नहीं दिखा सकता।",
+    "सेंटिनल-2 क्लाउडलेस 2024 खरा रंग, 10 मी. प्रादेशिक संदर्भासाठी चांगले, पण फक्त 10 मी — शेताची सीमा दाखवू शकत नाही."
+  ],
+  "map.noteDark": ["Vector basemap — smallest and fastest, no imagery.", "वेक्टर आधार नक्शा — सबसे छोटा और तेज़, इमेजरी नहीं।", "वेक्टर बेस नकाशा — सर्वात लहान आणि वेगवान, प्रतिमा नाही."],
+  "map.noteLight": ["Vector basemap — good for printing and bright screens.", "वेक्टर आधार नक्शा — प्रिंट और तेज़ स्क्रीन के लिए अच्छा।", "वेक्टर बेस नकाशा — प्रिंट व तेज स्क्रीनसाठी चांगला."],
+  "map.clarity": ["Clarity", "स्पष्टता", "स्पष्टता"],
+  "map.natural": ["Natural", "प्राकृतिक", "नैसर्गिक"],
+  "map.enhanced": ["Enhanced", "बेहतर", "सुधारित"],
+  "map.highContrast": ["High contrast", "हाई कॉन्ट्रास्ट", "उच्च कॉन्ट्रास्ट"],
+  "map.labels": ["Place names", "स्थान नाम", "ठिकाण नावे"],
+  "map.hillshade": ["Terrain shading", "भू-आकृति छाया", "भूरचना सावली"],
+  "map.detail": ["View detail {mpp} m per pixel", "व्यू विवरण {mpp} मी प्रति पिक्सेल", "दृश्य तपशील {mpp} मी प्रति पिक्सेल"],
+  "map.beyondNative": [
+    "past the imagery's real detail, tiles are upscaled",
+    "इमेजरी के असली विवरण से आगे, टाइलें अपस्केल हैं",
+    "प्रतिमेच्या खऱ्या तपशिलाच्या पुढे, टाइल्स अपस्केल आहेत"
   ],
   "world.acqTitle": ["Satellite acquisitions ({n})", "उपग्रह अधिग्रहण ({n})", "उपग्रह संपादने ({n})"],
   "world.acquired": ["Acquired", "प्राप्त", "प्राप्त"],

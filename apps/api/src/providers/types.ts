@@ -49,7 +49,17 @@ function buildMetas(): Record<ProviderId, ProviderMeta> {
       category: "weather",
       auth: "none",
       auth_state: "none",
-      keylessCapabilities: ["forecast", "historical (ERA5 model reanalysis)", "elevation (DEM)"],
+      keylessCapabilities: [
+        "forecast",
+        "historical (ERA5 model reanalysis)",
+        "elevation (DEM)",
+        "apparent temperature, cloud cover, surface pressure",
+        "vapour pressure deficit (VPD)",
+        "solar radiation, sunshine hours, UV index",
+        "hours of precipitation, wind gusts",
+        "modelled root-zone soil moisture (3 depth layers)",
+        "air quality: PM2.5 / PM10 / dust / AQI (CAMS)",
+      ],
       docsUrl: "https://open-meteo.com/en/docs",
     },
     opentopodata: {

@@ -487,6 +487,13 @@ h1, h2, h3, h4 {
   color: #e8cf9a;
 }
 
+/* Inline status text. These class names were already used in the field form
+   (location set / denied / unavailable) but had never been defined, so every
+   such message rendered as plain body text with no signal colour. */
+.ok-text { color: var(--accent); }
+.warn-text { color: var(--amber); }
+.err-text { color: var(--red); }
+
 .kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; font-size: 13px; }
 .kv dt { color: var(--text-faint); font-weight: 600; }
 .kv dd { margin: 0; color: var(--text); word-break: break-word; }

@@ -74,7 +74,7 @@ Checks:
 
 ```bash
 bun run typecheck    # tsc for the API and the web app
-bun test             # backend unit + integration tests (103)
+bun test             # backend unit + integration tests (126)
 bun run build:api    # bundle the API (dist/index.js)
 node scripts/smoke_live.mjs   http://localhost:8787   # live smoke suite
 node scripts/verify_final.mjs http://localhost:8787   # final acceptance suite

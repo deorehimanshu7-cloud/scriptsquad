@@ -5,6 +5,7 @@ import { jsonParse, jsonStringify, newId, round } from "../util";
 import { getFieldRow, composeWorldModel } from "./worldModel";
 import type { AssistantAnswer, AssistantMessage } from "contracts";
 import { buildAiContext, questionFocus, aiContextForPrompt, FOCUS_DOMAINS, type AiContextPayload, type AiFocus } from "./aiContext";
+import { composeAnswer } from "./answerEngine";
 
 /**
  * Grounded assistant. Two modes:
@@ -38,7 +39,12 @@ export async function answerForField(
   // is sent to the reasoning layer (sensor question → sensor evidence only,
   // irrigation → water + weather + sensors, change → satellite + history …).
   const focus = questionFocus(question);
-  const ctx = buildAiContext(db, fieldId, { focus, perDomain: 6, intelLimit: 4 });
+  // Roomier than the UI default on purpose. Apart from weather (which the
+  // context builder pages separately, current-first) every domain here is small
+  // and bounded — a soil depth profile is ~20 rows. Truncating one silently
+  // produces a half-profile: an answer that omits the 0-5 cm layer because it
+  // fell off the page reads as if that layer does not exist.
+  const ctx = buildAiContext(db, fieldId, { focus, perDomain: 40, intelLimit: 4 });
   const focused = aiContextForPrompt(ctx);
   const context: LlmContext = {
     field: ctx.field,
@@ -62,7 +68,7 @@ export async function answerForField(
 
   if (!config.llm.apiKey) {
     return {
-      answer: localAnswer(context, question),
+      answer: composeAnswer(ctx, question),
       mode: "LOCAL_GROUNDED_FALLBACK",
       evidence: evidenceRefs,
       uncertainty,
@@ -76,21 +82,13 @@ export async function answerForField(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
-      answer: `The language model provider failed (${message}). Falling back to a deterministic summary of recorded evidence.\n\n${localAnswer(context, question)}`,
+      answer: `The language model provider failed (${message}). Falling back to a grounded local answer.\n\n${composeAnswer(ctx, question)}`,
       mode: "LOCAL_GROUNDED_FALLBACK",
       evidence: evidenceRefs,
       uncertainty,
       next_action: "Check the LLM provider configuration.",
     };
   }
-}
-
-function localAnswer(context: LlmContext, question: string): string {
-  const field = (context.field as { name?: string } | null) ?? null;
-  const head = `Grounded summary for field "${field?.name ?? "this field"}" (local evidence-only mode — no language model configured):\n`;
-  const domainLines = context.domains.map((d) => `• ${d}`).join("\n");
-  const evidenceLines = context.evidence.map((e) => `• ${e}`).join("\n");
-  return `${head}\n\nWorld model (focus: ${context.focus}):\n${domainLines}\n\nSensors:\n${context.sensors}\n\nSatellite:\n${context.satellite}\n\nIntelligence:\n${context.intelligence}\n\nRelevant evidence:\n${evidenceLines}\n\nQuestion: "${question}"\n\nI can only report what is actually recorded. Every value above carries its truth state ([OBSERVED]/[DERIVED]/[ESTIMATED]/[PREDICTED]/[HISTORICAL]/[SIMULATED]/[UNKNOWN]). Anything not listed is UNKNOWN — the system never fills gaps with assumed values.`;
 }
 
 interface LlmContext {
@@ -108,7 +106,7 @@ function ctxToEvidenceRefs(ctx: AiContextPayload): { id: string; domain: string;
   for (const e of ctx.sensors.observations) {
     refs.push({ id: String(e.id), domain: "sensor", sub_type: String(e.sensor_type), state: "OBSERVED" });
   }
-  for (const sec of [ctx.weather, ctx.soil, ctx.water, ctx.terrain, ctx.crop] as { entries: Record<string, unknown>[] }[]) {
+  for (const sec of [ctx.weather, ctx.environment, ctx.soil, ctx.water, ctx.terrain, ctx.crop] as { entries: Record<string, unknown>[] }[]) {
     for (const e of sec.entries) refs.push({ id: String(e.id), domain: String(e.domain), sub_type: String(e.sub_type), state: String(e.state) });
   }
   return refs.slice(0, 12);

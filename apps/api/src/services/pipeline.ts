@@ -2,7 +2,7 @@ import type { AppDb } from "../db";
 import { nowIso } from "../db";
 import { config } from "../config";
 import { recordHealth, runProvider, type ProviderCtx } from "../providers/orchestrator";
-import { getWeatherBundle, getElevation } from "../providers/openmeteo";
+import { getWeatherBundle, getElevation, getSoilMoistureNow, getAirQualityNow } from "../providers/openmeteo";
 import { getDemSamples, opentopodataProvenance } from "../providers/opentopodata";
 import { DEFAULT_DISCOVERY_COLLECTIONS, searchStac } from "../providers/copernicus";
 import { getSoilProperties, type SoilPropertyRow } from "../providers/soilgrids";
@@ -15,7 +15,7 @@ import { runIntelligence } from "./engines";
 import { addMemory } from "./memory";
 import { publishEvent } from "./events";
 import { createJob, markRunning, finishJob } from "./jobs";
-import { aoiBbox, samplePointsInside } from "../geo";
+import { aoiBbox, demGridDivisions, samplePointsInside } from "../geo";
 import { round } from "../util";
 
 export type PipelineJobFn = (ctx: ProviderCtx & { field: NonNullable<ReturnType<typeof getFieldRow>> }) => Promise<unknown>;
@@ -69,15 +69,25 @@ export async function refreshWeather(db: AppDb, fieldId: string): Promise<void> 
     const retrieved = now;
     // de-dupe: remove model rows we are about to replace for this window
     deleteEvidenceWhere(db, fieldId, "weather");
+    // The soil and environment domains also carry rows this step owns, so they
+    // are replaced by exact sub_type rather than by whole domain (a domain-wide
+    // delete would wipe the SoilGrids and terrain evidence produced elsewhere).
+    db.conn.query("DELETE FROM evidence WHERE field_id = ? AND sub_type LIKE 'modelled_volumetric_water_%'").run(fieldId);
+    db.conn.query("DELETE FROM evidence WHERE field_id = ? AND sub_type LIKE 'air_quality_%'").run(fieldId);
     let inserted = 0;
 
     if (b.current) {
       const rows: { sub: string; val: number | null; unit: string; label: string }[] = [
         { sub: "temperature_2m", val: b.current.temperature_2m, unit: "°C", label: "Air temperature (2 m)" },
         { sub: "relative_humidity_2m", val: b.current.relative_humidity_2m, unit: "%", label: "Relative humidity (2 m)" },
+        { sub: "apparent_temperature", val: b.current.apparent_temperature, unit: "°C", label: "Apparent (feels-like) temperature" },
         { sub: "precipitation", val: b.current.precipitation, unit: "mm", label: "Precipitation" },
         { sub: "weather_code", val: b.current.weather_code, unit: "wmo", label: "WMO weather code" },
         { sub: "wind_speed_10m", val: b.current.wind_speed_10m, unit: "km/h", label: "Wind speed (10 m)" },
+        { sub: "wind_gusts_10m", val: b.current.wind_gusts_10m, unit: "km/h", label: "Wind gusts (10 m) — spray-drift and lodging relevance" },
+        { sub: "cloud_cover", val: b.current.cloud_cover, unit: "%", label: "Cloud cover" },
+        { sub: "surface_pressure", val: b.current.surface_pressure, unit: "hPa", label: "Surface pressure" },
+        { sub: "vapour_pressure_deficit", val: b.current.vapour_pressure_deficit, unit: "kPa", label: "Vapour pressure deficit (VPD)" },
       ];
       for (const r of rows) {
         if (r.val === null) continue;
@@ -113,9 +123,21 @@ export async function refreshWeather(db: AppDb, fieldId: string): Promise<void> 
       const dayRows: { sub: string; val: number | null; unit: string; label: string }[] = [
         { sub: "temperature_2m_max", val: day.temperature_2m_max, unit: "°C", label: "Max air temperature" },
         { sub: "temperature_2m_min", val: day.temperature_2m_min, unit: "°C", label: "Min air temperature" },
+        { sub: "temperature_2m_mean", val: day.temperature_2m_mean, unit: "°C", label: "Mean air temperature" },
         { sub: "precipitation_sum", val: day.precipitation_sum, unit: "mm", label: "Precipitation total" },
+        { sub: "precipitation_hours", val: day.precipitation_hours, unit: "hr", label: "Hours of precipitation" },
         { sub: "et0_fao_evapotranspiration", val: day.et0_fao_evapotranspiration, unit: "mm", label: "Reference evapotranspiration (FAO ET0)" },
         { sub: "precipitation_probability_max", val: day.precipitation_probability_max, unit: "%", label: "Precipitation probability" },
+        { sub: "shortwave_radiation_sum", val: day.shortwave_radiation_sum, unit: "MJ/m²", label: "Solar radiation total (shortwave)" },
+        {
+          sub: "sunshine_duration",
+          // provider reports seconds; stored in hours and said so (no silent unit change)
+          val: day.sunshine_duration === null ? null : Math.round((day.sunshine_duration / 3600) * 10) / 10,
+          unit: "hr",
+          label: "Sunshine duration (converted from provider seconds)",
+        },
+        { sub: "uv_index_max", val: day.uv_index_max, unit: "index", label: "Max UV index" },
+        { sub: "wind_gusts_10m_max", val: day.wind_gusts_10m_max, unit: "km/h", label: "Max wind gusts" },
       ];
       for (const r of dayRows) {
         if (r.val === null) continue;
@@ -142,6 +164,96 @@ export async function refreshWeather(db: AppDb, fieldId: string): Promise<void> 
             model: state === "PREDICTED" ? "Open-Meteo forecast" : "Open-Meteo historical (reanalysis blend)",
             processing: "point retrieval at field centroid",
             note: b.note,
+          },
+        });
+        inserted++;
+      }
+    }
+
+    // ---- modelled root-zone soil moisture (free, key-less) -----------------
+    // Land-surface MODEL output in three real depth layers. Stored PREDICTED and
+    // never allowed to stand in for a probe reading.
+    const smRes = await runProvider(
+      { db },
+      "openmeteo",
+      () => getSoilMoistureNow(field.centroid_lat, field.centroid_lon).then((d) => ({ data: d })),
+      { timeoutMs: 20_000, retries: 1 },
+    );
+    if (smRes.status === "AVAILABLE" && smRes.data) {
+      const sm = smRes.data;
+      for (const layer of sm.layers) {
+        if (layer.value === null) continue;
+        addEvidence(db, {
+          userId: field.user_id,
+          farmId: field.farm_id,
+          fieldId,
+          domain: "soil",
+          source: "Open-Meteo",
+          source_type: "open-meteo",
+          sub_type: `modelled_volumetric_water_${layer.depth}`,
+          measurement: `Modelled soil moisture (${layer.depth})`,
+          value: layer.value,
+          unit: "m³/m³",
+          state: "PREDICTED",
+          observed_at: sm.time ?? now,
+          retrieved_at: retrieved,
+          description: sm.note,
+          provenance: {
+            provider: "openmeteo",
+            model: "Open-Meteo land-surface soil moisture",
+            processing: "point retrieval at field centroid, hour matched to now",
+          },
+        });
+        inserted++;
+      }
+      publishEvent(db, {
+        type: "SOIL_MOISTURE_UPDATED",
+        user_id: field.user_id,
+        farm_id: field.farm_id,
+        field_id: fieldId,
+        payload: { layers: sm.layers.length, state: "PREDICTED" },
+      });
+    }
+
+    // ---- air quality / particulate load (same provider, no key) -----------
+    // Real atmospheric-model values. Farming-relevant: dust load bears on spray
+    // drift and residue-burning questions, and on field-worker exposure.
+    const aqRes = await runProvider(
+      { db },
+      "openmeteo",
+      () => getAirQualityNow(field.centroid_lat, field.centroid_lon).then((d) => ({ data: d })),
+      { timeoutMs: 20_000, retries: 1 },
+    );
+    if (aqRes.status === "AVAILABLE" && aqRes.data) {
+      const aq = aqRes.data;
+      const aqRows: { sub: string; val: number | null; unit: string; label: string }[] = [
+        { sub: "air_quality_pm2_5", val: aq.pm2_5, unit: "μg/m³", label: "PM2.5 particulate (model)" },
+        { sub: "air_quality_pm10", val: aq.pm10, unit: "μg/m³", label: "PM10 particulate (model)" },
+        { sub: "air_quality_dust", val: aq.dust, unit: "μg/m³", label: "Dust load (model)" },
+        { sub: "air_quality_us_aqi", val: aq.us_aqi, unit: "USAQI", label: "US air quality index" },
+        { sub: "air_quality_european_aqi", val: aq.european_aqi, unit: "EAQI", label: "European air quality index" },
+      ];
+      for (const r of aqRows) {
+        if (r.val === null) continue;
+        addEvidence(db, {
+          userId: field.user_id,
+          farmId: field.farm_id,
+          fieldId,
+          domain: "environment",
+          source: "Open-Meteo",
+          source_type: "open-meteo",
+          sub_type: r.sub,
+          measurement: r.label,
+          value: r.val,
+          unit: r.unit,
+          state: "PREDICTED",
+          observed_at: aq.time ?? now,
+          retrieved_at: retrieved,
+          description: aq.note,
+          provenance: {
+            provider: "openmeteo",
+            model: "CAMS via Open-Meteo air-quality API",
+            processing: "point retrieval at field centroid",
           },
         });
         inserted++;
@@ -272,7 +384,7 @@ export async function refreshSoil(db: AppDb, fieldId: string): Promise<void> {
         { db },
         "soilgrids",
         () => getSoilPropertiesWcs(field.centroid_lat, field.centroid_lon).then((rows) => ({ data: rows })),
-        { timeoutMs: 90_000, retries: 0 },
+        { timeoutMs: 180_000, retries: 0 },
       );
       if (wcs.status === "AVAILABLE" && wcs.data) {
         usable = wcs.data.filter((row) => row.mean !== null);
@@ -283,7 +395,7 @@ export async function refreshSoil(db: AppDb, fieldId: string): Promise<void> {
             "soilgrids",
             "AVAILABLE",
             wcs.latencyMs,
-            "SoilGrids REST paused by ISRIC; serving real v2.0 250 m model data via the public WCS map server (maps.isric.org). 0-5 cm depth only. Values are ESTIMATED model data, not field measurements.",
+            "SoilGrids REST paused by ISRIC; serving real v2.0 250 m model data via the public WCS map server (maps.isric.org), including a real depth profile (texture, organic carbon and bulk density at 0-5 / 5-15 / 15-30 / 30-60 cm). Values are ESTIMATED model data, not field measurements.",
           );
         }
       }
@@ -298,8 +410,11 @@ export async function refreshSoil(db: AppDb, fieldId: string): Promise<void> {
       recordHealth(db, "soilgrids", "DATA_QUALITY_FAILURE", res.latencyMs, msg);
       throw new Error(msg);
     }
-    // replace the previous model estimate batch (only after a usable response)
-    deleteEvidenceWhere(db, fieldId, "soil");
+    // Replace the previous SoilGrids estimate batch (only after a usable
+    // response). Scoped to the SoilGrids rows this step owns: the soil domain
+    // also carries model-derived soil moisture written by the weather step, and
+    // a domain-wide delete here silently wiped it on every pipeline run.
+    db.conn.query("DELETE FROM evidence WHERE field_id = ? AND domain = 'soil' AND sub_type NOT LIKE 'modelled_%'").run(fieldId);
     let inserted = 0;
     for (const row of usable) {
       if (row.mean === null) continue;
@@ -433,11 +548,28 @@ export async function refreshWater(db: AppDb, fieldId: string): Promise<void> {
 // Terrain — real DEM grid sampling (SRTM 90 m → ASTER 30 m), with an honest
 // single-point Open-Meteo fallback when the DEM datasets are unreachable.
 // ---------------------------------------------------------------------------
+
+/**
+ * Target DEM sample spacing in metres. ASTER GDEM is 30 m; SRTM is 90 m. The
+ * previous fixed 3×3 grid left ~200 m between samples on a 32 ha field, which
+ * is coarser than the raster itself and made the twin surface effectively flat.
+ */
+const DEM_TARGET_SPACING_M = 30;
+/**
+ * Cap on grid divisions per axis → at most 256 locations, i.e. at most 3
+ * OpenTopoData requests (100 locations each). Bounds the per-refresh cost for
+ * very large fields without needing a per-field setting.
+ */
+const DEM_MAX_GRID_AXIS = 16;
+
 export async function refreshTerrain(db: AppDb, fieldId: string): Promise<void> {
   const field = getFieldRow(db, fieldId);
   if (!field) return;
   await runJobGuarded(db, { type: "TERRAIN_REFRESH", fieldId, userId: field.user_id }, async () => {
-    const pts = samplePointsInside(field.geometry, 3);
+    // Divisions are sized per axis so the spacing stays near the DEM's own
+    // resolution on both axes (a square grid over a 2:1 bbox halves it).
+    const { nx, ny } = demGridDivisions(field.geometry, DEM_TARGET_SPACING_M, DEM_MAX_GRID_AXIS);
+    const pts = samplePointsInside(field.geometry, nx, ny);
     if (pts.length === 0) throw new Error("Cannot sample terrain: no grid points inside the field polygon");
 
     // Primary path: real DEM raster samples (SRTM 90 m, falls back to ASTER 30 m).
@@ -456,32 +588,39 @@ export async function refreshTerrain(db: AppDb, fieldId: string): Promise<void> 
       const t = nowIso();
       const stats = deriveTerrainStats(samples);
 
-      // per-sample point evidence (real coordinates; feeds the 3D twin surface)
-      for (const s of samples) {
-        addEvidence(db, {
-          userId: field.user_id,
-          farmId: field.farm_id,
-          fieldId,
-          domain: "terrain",
-          source: `OpenTopoData ${dataset} DEM`,
-          source_type: `dem-${dem.data.dataset}`,
-          sub_type: "elevation_sample_m",
-          measurement: `DEM sample at ${s.lat.toFixed(5)}, ${s.lon.toFixed(5)}`,
-          value: s.elevation_m_raw,
-          unit: "m",
-          state: "DERIVED",
-          observed_at: t,
-          geometry: { type: "Point", coordinates: [s.lon, s.lat] },
-          description: `Real ${dataset} DEM raster cell sampled at this coordinate (DERIVED — raster cell value, not a survey measurement).`,
-          provenance: {
-            provider: "opentopodata",
-            model: dem.data.dataset === "srtm90m" ? "NASA SRTM v4.1 (90 m)" : "ASTER GDEM v3 (30 m)",
-            processing: `OpenTopoData raster sample via ${dem.data.endpoint}`,
-            access_url: dem.data.endpoint,
-            note: `${opentopodataProvenance.license} · dataset_state ${opentopodataProvenance.dataset_state}`,
-          },
-        });
-      }
+      // The whole DEM grid is ONE evidence row rather than one row per sample:
+      // a 100+ point grid would flood the evidence list, evict the summary rows
+      // the twin reads (terrain is fetched with a LIMIT), and make the terrain
+      // domain's evidence count read as "hundreds of observations" when it is
+      // really a single provider response. GeoJSON MultiPoint carries each
+      // sample's real elevation as its third ordinate, so the grid is still a
+      // single, standards-shaped spatial geometry.
+      addEvidence(db, {
+        userId: field.user_id,
+        farmId: field.farm_id,
+        fieldId,
+        domain: "terrain",
+        source: `OpenTopoData ${dataset} DEM`,
+        source_type: `dem-${dem.data.dataset}`,
+        sub_type: "dem_grid",
+        measurement: `DEM sample grid (${samples.length} points)`,
+        value: stats.mean_m,
+        unit: "m",
+        state: "DERIVED",
+        observed_at: t,
+        geometry: {
+          type: "MultiPoint",
+          coordinates: samples.map((s) => [s.lon, s.lat, s.elevation_m_raw as number]),
+        },
+        description: `Real ${dataset} DEM raster cells sampled on a ${nx}×${ny} grid clipped to the field polygon (${samples.length} points inside). Each coordinate triple is lon, lat, elevation — DERIVED raster cell values, never survey measurements.`,
+        provenance: {
+          provider: "opentopodata",
+          model: dem.data.dataset === "srtm90m" ? "NASA SRTM v4.1 (90 m)" : "ASTER GDEM v3 (30 m)",
+          processing: `OpenTopoData raster samples via ${dem.data.endpoint} on a ${nx}×${ny} grid (~${DEM_TARGET_SPACING_M} m target spacing, ≤${DEM_MAX_GRID_AXIS} divisions/axis) in ${dem.data.requests} batched request(s)`,
+          access_url: dem.data.endpoint,
+          note: `${opentopodataProvenance.license} · dataset_state ${opentopodataProvenance.dataset_state}`,
+        },
+      });
 
       // summary rows (DERIVED statistics over the real samples)
       const summary: { sub: string; measurement: string; value: number; note: string }[] = [

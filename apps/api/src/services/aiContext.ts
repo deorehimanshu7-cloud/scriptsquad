@@ -71,7 +71,7 @@ export type AiFocus =
 export const FOCUS_DOMAINS: Record<Exclude<AiFocus, "all">, string[]> = {
   sensors: ["sensor"],
   satellite: ["satellite", "crop"],
-  weather: ["weather"],
+  weather: ["weather", "environment"],
   soil: ["soil", "environment"],
   water: ["water"],
   terrain: ["terrain", "environment"],
@@ -148,6 +148,7 @@ export interface AiContextPayload {
   };
   satellite: { state: string; reason: string; latest: Record<string, unknown> | null; best: Record<string, unknown> | null; products: Record<string, unknown>[] };
   weather: { state: string; summary: string | null; entries: Record<string, unknown>[] };
+  environment: { state: string; summary: string | null; entries: Record<string, unknown>[] };
   soil: { state: string; summary: string | null; entries: Record<string, unknown>[] };
   water: { state: string; summary: string | null; entries: Record<string, unknown>[] };
   terrain: { state: string; summary: string | null; entries: Record<string, unknown>[] };
@@ -268,6 +269,41 @@ export function buildAiContext(db: AppDb, fieldId: string, opts: AiContextOption
   const { domains } = composeWorldModel(db, fieldId);
   const worldDomains = domains as unknown as Record<string, unknown>[];
 
+  /**
+   * Weather needs its own page shape.
+   *
+   * `listEvidence` orders by observed_at DESC. For a forecast series that means
+   * the FARTHEST FUTURE day sorts first, so once enough daily variables exist,
+   * "right now" and today's rows are pushed completely out of the page — the
+   * context (and any answer built on it) simply loses current conditions.
+   *
+   * Order it the way a person reads a forecast instead: current conditions,
+   * then today and the coming days ascending, then the most recent past days.
+   */
+  const weatherBlock = (): { state: string; summary: string | null; entries: Record<string, unknown>[] } => {
+    const wd = worldDomains.find((d) => d.domain === "weather") as Record<string, unknown> | undefined;
+    const today = new Date().toISOString().slice(0, 10);
+    const current = db.conn
+      .query("SELECT * FROM evidence WHERE field_id = ? AND domain = 'weather' AND sub_type LIKE 'current_%' ORDER BY observed_at DESC LIMIT 20")
+      .all(fieldId) as unknown as EvidenceRecord[];
+    const ahead = db.conn
+      .query(
+        "SELECT * FROM evidence WHERE field_id = ? AND domain = 'weather' AND sub_type NOT LIKE 'current_%' AND observed_at >= ? ORDER BY observed_at ASC LIMIT 200",
+      )
+      .all(fieldId, today) as unknown as EvidenceRecord[];
+    const past = db.conn
+      .query(
+        "SELECT * FROM evidence WHERE field_id = ? AND domain = 'weather' AND sub_type NOT LIKE 'current_%' AND observed_at < ? ORDER BY observed_at DESC LIMIT 12",
+      )
+      .all(fieldId, today) as unknown as EvidenceRecord[];
+    const entries = [...current, ...ahead, ...past].map(evEntry);
+    return {
+      state: String(wd?.state ?? (entries.length ? "OBSERVED" : "NO_DATA")),
+      summary: (wd?.summary as string | null) ?? null,
+      entries,
+    };
+  };
+
   // ---- intelligence ------------------------------------------------------
   const q = (sql: string, limit: number): Record<string, unknown>[] =>
     db.conn.query(sql).all(fieldId, String(limit)) as Record<string, unknown>[];
@@ -328,7 +364,9 @@ export function buildAiContext(db: AppDb, fieldId: string, opts: AiContextOption
       best,
       products: products.slice(0, 8),
     },
-    weather: domainBlock("weather", worldDomains),
+    weather: weatherBlock(),
+    // atmospheric environment (air quality / particulates). Free, key-less.
+    environment: domainBlock("environment", worldDomains),
     soil: domainBlock("soil", worldDomains),
     water: domainBlock("water", worldDomains),
     terrain: domainBlock("terrain", worldDomains),
@@ -386,7 +424,7 @@ export function aiContextForPrompt(
     .filter((d) => (opts.includeAllDomains || focusDomains === null ? true : focusDomains.includes(String(d.domain))))
     .map((d) => `- ${d.domain}: ${d.state} (${d.count} item(s)) — ${d.summary}`);
   const evLines: string[] = [];
-  for (const sec of [ctx.weather, ctx.soil, ctx.water, ctx.terrain, ctx.crop] as { entries: Record<string, unknown>[] }[]) {
+  for (const sec of [ctx.weather, ctx.environment, ctx.soil, ctx.water, ctx.terrain, ctx.crop] as { entries: Record<string, unknown>[] }[]) {
     for (const e of sec.entries) {
       if (focusDomains && !focusDomains.includes(String(e.domain))) continue;
       evLines.push(`- ${e.domain}/${e.sub_type} = ${e.value ?? "—"} ${e.unit ?? ""} [${e.state}] at ${String(e.observed_at).slice(0, 10)} (${e.source})`);

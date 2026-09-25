@@ -6,23 +6,15 @@ import { useApp } from "../../lib/state";
 import { Badge, Card, EmptyState, Hint, ProviderBadge, Spinner, TruthBadge } from "../../components/ui";
 import { RequireField } from "./AppLayout";
 import { buildTwinScene, type TwinLayers, type TwinPick, type TwinSceneInput, type TwinSceneHandle } from "../../components/twin/buildTwinScene";
+import { buildBasemapStyle, detailStatus, CLARITY_OPTIONS, type ClarityId } from "../../lib/basemap";
 import { fmtArea, fmtDate } from "../../lib/format";
 import type { FieldRecord } from "../../lib/types";
 
-/** Real public satellite/aerial basemap tiles (ESRI World Imagery) — geographic context, not an acquisition. */
-const SAT_STYLE = {
-  version: 8,
-  sources: {
-    esri: {
-      type: "raster",
-      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-      tileSize: 256,
-      attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
-    },
-  },
-  layers: [{ id: "esri", type: "raster", source: "esri" }],
-};
-const DARK_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+/**
+ * Real public satellite/aerial basemap tiles — geographic context, not an acquisition.
+ * Imagery, zoom ceilings and clarity come from the shared basemap module so the
+ * 2D map here, the twin's 3D ground texture and the world map cannot drift apart.
+ */
 type ContextStyle = "sat" | "dark";
 
 interface TwinEnvelope {
@@ -43,6 +35,7 @@ const LAYER_META: { id: TwinLayers; label: string }[] = [
   { id: "soil", label: "Soil volume" },
   { id: "roots", label: "Root zone" },
   { id: "crops", label: "Crop (MODELLED)" },
+  { id: "water", label: "Water (OSM context)" },
   { id: "sensors", label: "Sensors" },
   { id: "satellite", label: "Satellite" },
   { id: "intel", label: "Intelligence" },
@@ -53,13 +46,17 @@ const PROVIDERISH = [
   "PROVIDER_ERROR", "UNAVAILABLE", "DATA_QUALITY_FAILURE", "WAITING_FOR_DEVICE",
 ];
 
-function makeFieldMap(container: HTMLElement, field: FieldRecord, context: ContextStyle): maplibregl.Map {
+function makeFieldMap(container: HTMLElement, field: FieldRecord, context: ContextStyle, clarity: ClarityId): maplibregl.Map {
   const m = new maplibregl.Map({
     container,
-    style: context === "sat" ? (SAT_STYLE as never) : DARK_STYLE,
+    style: buildBasemapStyle({ imagery: context === "sat" ? "auto" : "dark", clarity }) as never,
     center: [field.centroid_lon, field.centroid_lat],
     zoom: 15,
+    // Cap below MapLibre's default 22: the imagery stops carrying real detail
+    // around z19, so deeper zoom only shows upscaled pixels.
+    maxZoom: 20,
     attributionControl: { compact: true },
+    // preserveDrawingBuffer lets the 3D twin sample this canvas as a ground texture.
     canvasContextAttributes: { preserveDrawingBuffer: true, antialias: true },
   });
   m.addControl(new maplibregl.NavigationControl({}), "top-left");
@@ -105,6 +102,11 @@ function TwinInner() {
   const [explode, setExplode] = useState(45); // start partially exploded so the layer stack reads immediately
   const [autoRotate, setAutoRotate] = useState(false);
   const [context, setContext] = useState<ContextStyle>("sat");
+  const [clarity, setClarity] = useState<ClarityId>("enhanced");
+  const [mapZoom, setMapZoom] = useState(15);
+  // How much ground one screen pixel covers at the current zoom, versus what the
+  // imagery can resolve — so "zoomed in" is never mistaken for "more detail".
+  const twinDetail = detailStatus(context === "sat" ? "auto" : "dark", field.centroid_lat, mapZoom);
   const [cutaway, setCutaway] = useState(false);
   const [selection, setSelection] = useState<TwinPick | null>(null);
   const [visible, setVisible] = useState<Record<TwinLayers, boolean>>({
@@ -112,6 +114,7 @@ function TwinInner() {
     soil: true,
     roots: true,
     crops: true,
+    water: true,
     sensors: true,
     satellite: true,
     intel: true,
@@ -121,27 +124,29 @@ function TwinInner() {
   // the field or the context basemap (satellite/dark) changes.
   useEffect(() => {
     if (!hiddenMapHost.current) return;
-    const m = makeFieldMap(hiddenMapHost.current, field, context);
+    const m = makeFieldMap(hiddenMapHost.current, field, context, clarity);
     hiddenMap.current = m;
+    m.on("zoom", () => setMapZoom(m.getZoom()));
     scheduleTextureRefresh(m, () => handleRef.current?.refreshGroundTexture());
     return () => {
       m.remove();
       hiddenMap.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [field.id, context]);
+  }, [field.id, context, clarity]);
 
   // split-mode live 2D map (mounted only while split is on)
   useEffect(() => {
     if (!split || !splitMapHost.current) return;
-    const m = makeFieldMap(splitMapHost.current, field, context);
+    const m = makeFieldMap(splitMapHost.current, field, context, clarity);
     splitMap.current = m;
+    m.on("zoom", () => setMapZoom(m.getZoom()));
     return () => {
       m.remove();
       splitMap.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [split, field.id, context]);
+  }, [split, field.id, context, clarity]);
 
   const mapCanvasProvider = useCallback(
     () => splitMap.current?.getCanvas() ?? hiddenMap.current?.getCanvas() ?? null,
@@ -230,6 +235,18 @@ function TwinInner() {
           <div className="row" style={{ gap: 4, border: "1px solid var(--border-strong)", borderRadius: 10, padding: 3 }}>
             <button className={`btn btn-sm ${context === "sat" ? "btn-primary" : "btn-ghost"}`} onClick={() => setContext("sat")} type="button">🛰️ Satellite context</button>
             <button className={`btn btn-sm ${context === "dark" ? "btn-primary" : "btn-ghost"}`} onClick={() => setContext("dark")} type="button">🗺️ Map context</button>
+            {context === "sat" &&
+              CLARITY_OPTIONS.map((c) => (
+                <button
+                  key={c.id}
+                  className={`btn btn-sm ${clarity === c.id ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => setClarity(c.id)}
+                  type="button"
+                  title="Satellite clarity — contrast and saturation applied to the imagery"
+                >
+                  {c.id === "natural" ? "Natural" : c.id === "enhanced" ? "Enhanced" : "High contrast"}
+                </button>
+              ))}
           </div>
           <button className={`btn btn-sm ${cutaway ? "btn-primary" : ""}`} onClick={() => setCutaway((c) => !c)} type="button" title="Reveals the soil/root slice under the surface">
             {cutaway ? "◧ Cutaway on" : "◈ Soil cutaway"}
@@ -265,9 +282,10 @@ function TwinInner() {
               <div className="col" style={{ gap: 8 }}>
                 <div className="section-label">Explode layers (vertical only)</div>
                 <div className="faint" style={{ fontSize: 11.5, lineHeight: 1.45 }}>
-                  Thick layer slabs, one above the other: 1 field → 2 soil → 3 roots → 4 crops → 5 sensors → 6 satellite →
-                  7 intelligence. Vertical scale is exaggerated (DISPLAY SCALE) so every layer reads clearly; XY stays true
-                  to the real field geometry.
+                  Thick layer slabs, one above the other: 1 field → 2 soil (real depth bands) → 3 roots → 4 crops →
+                  5 water → 6 sensors → 7 satellite → 8 intelligence. Vertical spacing and slab thickness scale with
+                  the field's own footprint, so the stack stays readable on both small plots and large holdings; XY
+                  stays true to the real field geometry while Y is a labelled DISPLAY SCALE.
                 </div>
                 <input
                   type="range"
@@ -361,6 +379,15 @@ function TwinInner() {
                 <div className="map-legend" style={{ bottom: "auto", top: 10 }}>
                   <span className="faint" style={{ fontSize: 11.5 }}>
                     2D — same field geometry · {context === "sat" ? "real satellite/aerial context" : "map context"}
+                    {context === "sat" && (
+                      <>
+                        {" · "}
+                        <span className={twinDetail.beyondNative ? "warn-text" : ""}>
+                          {twinDetail.metresPerPixel.toFixed(2)} m/px
+                          {twinDetail.beyondNative ? " — beyond the imagery's real detail" : ""}
+                        </span>
+                      </>
+                    )}
                   </span>
                 </div>
               </div>

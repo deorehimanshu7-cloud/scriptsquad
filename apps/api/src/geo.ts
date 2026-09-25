@@ -140,7 +140,13 @@ function pointInPolygons(lon: number, lat: number, geom: { type?: string; coordi
  * returned points are real coordinates within the field boundary — nothing is
  * fabricated.
  */
-export function samplePointsInside(g: FieldGeometry, n: number): LonLat[] {
+/**
+ * Grid-sample points inside the polygon. `n` divisions along longitude, `m`
+ * along latitude (defaults to `n`, i.e. an n×n square grid over the bbox).
+ * Separate axis counts let callers keep the sample spacing even on a field
+ * whose bbox is far from square — see `demGridDivisions`.
+ */
+export function samplePointsInside(g: FieldGeometry, n: number, m: number = n): LonLat[] {
   const b = bboxOf(g);
   const spanLon = Math.max(b.max_lon - b.min_lon, 1e-7);
   const spanLat = Math.max(b.max_lat - b.min_lat, 1e-7);
@@ -153,15 +159,43 @@ export function samplePointsInside(g: FieldGeometry, n: number): LonLat[] {
     pts.push({ lon, lat });
   };
   for (let ix = 0; ix < n; ix++) {
-    for (let iy = 0; iy < n; iy++) {
+    for (let iy = 0; iy < m; iy++) {
       const lon = b.min_lon + ((ix + 0.5) / n) * spanLon;
-      const lat = b.min_lat + ((iy + 0.5) / n) * spanLat;
+      const lat = b.min_lat + ((iy + 0.5) / m) * spanLat;
       if (pointInPolygons(lon, lat, g)) add(lon, lat);
     }
   }
   const c = centroidOf(g);
   if (pointInPolygons(c.lon, c.lat, g)) add(c.lon, c.lat);
   return pts;
+}
+
+/**
+ * Divisions for a DEM sample grid that land close to `spacingM` on BOTH axes.
+ *
+ * A single division count over a non-square bbox either samples the long axis
+ * far too coarsely (the whole reason a 32 ha field previously got 8 usable
+ * samples) or wastes locations on the short axis. Each axis is therefore sized
+ * from its own span, then clamped to [3, maxPerAxis]: at least a 3×3 grid so
+ * Horn's slope/aspect method has a window to work on, and at most `maxPerAxis`
+ * so one field cannot generate an unbounded number of provider locations.
+ *
+ * `spacingM` should be the DEM's native resolution (SRTM 90 m, ASTER 30 m) —
+ * sampling much finer than the raster cell size only repeats cell values.
+ */
+export function demGridDivisions(
+  g: FieldGeometry,
+  spacingM: number,
+  maxPerAxis: number,
+): { nx: number; ny: number } {
+  const b = bboxOf(g);
+  const c = centroidOf(g);
+  const mPerDegLon = 111_320 * Math.cos((c.lat * Math.PI) / 180);
+  const spanLonM = Math.abs(b.max_lon - b.min_lon) * Math.max(mPerDegLon, 1);
+  const spanLatM = Math.abs(b.max_lat - b.min_lat) * 111_320;
+  const spacing = Math.max(spacingM, 1);
+  const clamp = (v: number) => Math.max(3, Math.min(maxPerAxis, Math.round(v)));
+  return { nx: clamp(spanLonM / spacing), ny: clamp(spanLatM / spacing) };
 }
 
 /**

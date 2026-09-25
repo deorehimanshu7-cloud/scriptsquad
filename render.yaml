@@ -1,0 +1,77 @@
+# Render blueprint for the AGRIFUR2 backend.
+#
+# The API is a long-lived Bun/Express process (continuous-monitoring worker,
+# MQTT subscriber, SSE stream, file-backed SQLite), so it needs a persistent
+# host — exactly what this service is. The static SPA goes to Vercel instead;
+# see docs/DEPLOYMENT.md.
+#
+# Deploy: Render dashboard → New → Blueprint → pick this repository.
+# After the first deploy, copy the service URL and set it in the Vercel project
+# (see "Wiring the API" in docs/DEPLOYMENT.md).
+
+services:
+  - type: web
+    name: agrifur-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # A persistent disk is not available on the free instance type, and the
+    # SQLite file lives on one — see `disk` below.
+    plan: starter
+    region: singapore
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # NODE_ENV=production also disables the development demo account
+      # (routes/auth.ts), so no known-password user is created in public.
+      - key: NODE_ENV
+        value: production
+
+      # Must match the `disk.mountPath` below, or the database is written to the
+      # container filesystem and silently lost on the next deploy.
+      - key: DATABASE_PATH
+        value: /app/apps/api/data/agrifur.db
+
+      # Do not seed the demo account on a public host.
+      - key: SEED_DEMO_ON_BOOT
+        value: "0"
+
+      # Registration is open while this list is empty. Set it to a
+      # comma-separated list of emails to restrict who can sign up.
+      - key: ALLOWED_REGISTER_EMAILS
+        value: ""
+
+      # The subscriber only starts when a broker is explicitly configured, so
+      # physical sensors truthfully report NOT_CONFIGURED until you set one.
+      - key: MQTT_ENABLED
+        value: "0"
+
+      # Public HTTPS origin of THIS service. Render assigns it on first deploy;
+      # set it in the dashboard (e.g. https://agrifur-api.onrender.com).
+      - key: PUBLIC_BASE_URL
+        sync: false
+
+      # The Vercel frontend origin, for CORS. Accepts a comma-separated list.
+      - key: WEB_ORIGIN
+        sync: false
+
+      # Optional: grounded assistant. Without these the API stays in its
+      # labelled LOCAL_GROUNDED_FALLBACK mode rather than faking an answer.
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_BASE_URL
+        value: https://api.openai.com/v1
+      - key: LLM_MODEL
+        value: gpt-4o-mini
+
+      # Optional: Copernicus OAuth for raster/preview access. Anonymous STAC
+      # search works without these.
+      - key: COPERNICUS_CLIENT_ID
+        sync: false
+      - key: COPERNICUS_CLIENT_SECRET
+        sync: false
+
+    disk:
+      name: agrifur-data
+      mountPath: /app/apps/api/data
+      sizeGB: 1

@@ -46,6 +46,7 @@ Every value in the UI carries an explicit truth state. AGRIFUR never fabricates 
 ├── env.example    every environment variable, grouped public vs server-only
 ├── package.json   single-package root: all scripts + hoisted dependencies
 ├── vercel.json + .vercelignore   static SPA deploy settings for Vercel
+├── render.yaml    persistent backend host (Docker + SQLite disk)
 ├── Dockerfile + docker-compose.yml   full-stack container (Bun) + one-command stack
 ```
 
@@ -88,7 +89,7 @@ See [`env.example`](env.example). All secrets are **server-only** — real keys 
 ## Deployment
 
 - **Frontend on Vercel:** the static SPA is deployable as-is — import the repository and leave **Root Directory at the repository root**. The committed [`vercel.json`](vercel.json) pins the framework, install/build commands and the output directory (`apps/web/dist`), so Vercel needs no dashboard overrides; [`.vercelignore`](.vercelignore) keeps the upload limited to the SPA. The SPA is same-origin by default, so only the API is left to wire: point `/api` at your persistent backend (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) → Option B).
-- **Backend:** the API is a long-running Bun/Express process with a continuous-monitoring worker, MQTT subscriber and scheduled provider jobs — it must run on a persistent host (VM / container / PaaS with a real server process), not as a serverless function. Point `WEB_ORIGIN` / CORS at the frontend origin when split-hosting.
+- **Backend:** the API is a long-running Bun/Express process with a continuous-monitoring worker, MQTT subscriber and scheduled provider jobs — it must run on a persistent host (VM / container / PaaS with a real server process), not as a serverless function. The committed [`render.yaml`](render.yaml) deploys it as a Docker service with a persistent disk for the SQLite database; point `WEB_ORIGIN` / CORS at the frontend origin when split-hosting. The same image runs on any container host.
 - **Database:** SQLite file (persistent volume). For production scale, the schema layer is ready for an external Postgres database — document your instance and set `DATABASE_PATH`/connection accordingly.
 - **MQTT:** the broker must be reachable from the backend host; set `MQTT_BROKER_URL` (+ credentials). The ESP32 reference firmware publishes to `AGRIFUR/field/{field}/device/{device}/telemetry`.
 - **AI:** optional. Set `LLM_API_KEY` + `LLM_BASE_URL` + `LLM_MODEL`; without them the assistant stays in labelled grounded-fallback mode.

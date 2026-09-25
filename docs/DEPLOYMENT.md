@@ -33,6 +33,37 @@ One persistent server runs the API **and** serves the built frontend.
 
 Health: `GET /api/health`.
 
+### Render (blueprint included)
+
+The committed [`render.yaml`](../render.yaml) describes exactly this service, so
+there is nothing to configure by hand:
+
+1. Render dashboard → **New → Blueprint** → pick this repository.
+2. Render creates a **Docker** web service (`plan: starter`) with a 1 GB disk
+   mounted at `/app/apps/api/data`, and health-checks `/api/health`.
+   The disk is what makes the SQLite database survive a deploy — the free
+   instance type does not support disks.
+3. Set the two `sync: false` values in the dashboard once the service exists:
+   - `PUBLIC_BASE_URL` = the service's own URL (e.g. `https://agrifur-api.onrender.com`)
+   - `WEB_ORIGIN` = the Vercel frontend origin (for CORS)
+4. Verify: `curl https://<service>/api/health` → `{"ok":true,…}`.
+
+Render injects `PORT`; the app binds `0.0.0.0` on it, and the image's
+healthcheck reads the same variable, so no port wiring is needed.
+
+Notes for a public host:
+
+- `NODE_ENV=production` (baked into the image) disables the DEVELOPMENT_SEED
+  demo account, so no known-password user is ever created in public.
+- Registration is **open** while `ALLOWED_REGISTER_EMAILS` is empty. Set it to a
+  comma-separated list to restrict sign-ups.
+- `MQTT_ENABLED=0`: the broker subscriber stays off and the UI truthfully
+  reports `NOT_CONFIGURED` until you point it at a real broker.
+
+The same image runs on any container host (Fly.io, Railway, a VM) — the only
+host-specific requirements are a persistent volume for `DATABASE_PATH` and an
+injected `PORT`.
+
 ## Option B — frontend on Vercel, backend elsewhere
 
 The repository is **already configured** for this. Import it into Vercel and
